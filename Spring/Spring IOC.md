@@ -21,7 +21,7 @@ Spring容器并不是只有一个，可以分为二种类型。
 
 ![image](https://github.com/dqsbl2016/study/blob/master/Spring/img/1532494390919.jpg)
 
- 
+
 >ApplicationContext允许上下文嵌套，通过保持父上下文可以维持一个上下文体系。对于Bean的查找可以在这个上下文体系中发生，首先检查当前上下文，其次是父上>下文，逐级向上，这样为不同的Spring应用提供了一个共享的Bean定义环境。
 
 
@@ -132,8 +132,19 @@ Spring自带了多种类型的应用上下文，其中包括 `FileSystemXmlAppli
 
 ### 载入
 
-载入过程是把用户定义好的Bean封装成IOC容器内部的数据结构，就是`BeanDefinition`。
+载入过程是通过之前定位好的资源文件，会先通过`XmlBeanDefinitionReader`解析器将Bean定义资源文件转换成`Document`对象，然后通过`DefaultBeanDefinitionDocumentReader`对`Document`对象解析,然后将Bean的相关信息封装成IOC容器内部的数据结构，就是`BeanDefinition`。
 
 #### BeanDefinition
 
 Spring IOC容器管理了我们定义的各种Bean对象及相互关系，Bean对象在Spring实现中是以`BeanDefinition`来描述的。
+
+### 注册
+
+这个过程就是向IOC容器中注册这些`BeanDefinition`的过程，通过调用`BeanDefinitionRegistry`接口来实现完成的。实际上IOC容器就是`DefaultListableBeanFactory`中的`beanDefinitionMap` 是一个`ConcurrentHashMap`。
+
+
+
+> 在Spring IOC的设计中，Bean的载入和依赖注入是两个独立的过程。依赖注册是第一次通过`getBean()`向容器索取Bean的时候发生，但是又一个例外，如果某个Bean设置了`lazyinit`属性，那么Bean的依赖注入会在IOC容器初始化时就也会完成。
+
+
+
