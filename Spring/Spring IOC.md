@@ -108,7 +108,7 @@ Spring自带了多种类型的应用上下文，其中包括 `FileSystemXmlAppli
 
 `ApplicationContext`接口也继承了`ResourceLoader`接口，所以它的实现类也可以获取`Resource`。
 
-* ***ClassPathXmlApplicationContext* **  它在获取`Resource`时继承的是它的父类`DefaultResourceLoader`的策略。 可以从`Class Path`载入`Resource`。
+* ***ClassPathXmlApplicationContext***  它在获取`Resource`时继承的是它的父类`DefaultResourceLoader`的策略。 可以从`Class Path`载入`Resource`。
 
 * ***FileSystemXmlApplicationContext***   也继承了`DefaultResourceLoader`，但是它重写了`DefaultResourceLoader`的`getResourceByPath(String path)`方法。所以它在获取资源文件时首先也是判断指定的`location`是否包含`classpath:`前缀，如果包含，则把`location`中`classpath:`前缀后的资源从类路径下获取出来，当做一个`ClassPathResource`；否则，继续尝试把`location`封装成一个`URL`，返回对应的`UrlResource`；如果还是失败，则把`location`指定位置的资源当做一个`FileSystemResource`进行返回。 
 
