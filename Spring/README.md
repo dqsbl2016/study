@@ -17,7 +17,7 @@ Spring是个Java企业级应用的开源开发框架。 它主要解决企业应
 
 ##How to use Spring Framework?
 
-![1532486197121](\\1532486065585.png)
+![1532486197121](https://github.com/dqsbl2016/study/tree/master/Spring/1532486065585.png)
 
 * **核心容器** 由 `spring-beans` ，`spring-core`，`spring-context`，`spring-expression(Spring Expression Language，SpEL)`4个模块组成。 
 
