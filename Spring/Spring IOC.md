@@ -8,7 +8,7 @@ Spring容器并不是只有一个，可以分为二种类型。
 
   `org.springframework.beans.factory.BeanFactory` 是最简单的容器，提供基本的DI支持。
 
-![1532489938612](C:\Users\ADMINI~1\AppData\Local\Temp\1532489938612.png)
+![image](https://github.com/dqsbl2016/study/blob/master/Spring/img/1532489938612.jpg)
 
 ```
 其中 BeanFactory 作为最顶层的一个接口类，它定义了 IOC 容器的基本功能规范，BeanFactory 有三个子类：ListableBeanFactory、HierarchicalBeanFactory 和 AutowireCapableBeanFactory。
@@ -19,7 +19,7 @@ Spring容器并不是只有一个，可以分为二种类型。
 
 `org.springframework.context.ApplicationContext`基于BeanFactory构建，提供应用框架级别的服务，例如从属性文件解析文本信息以及发布应用事件给事件监听者。
 
-![1532494390919](C:\Users\ADMINI~1\AppData\Local\Temp\1532494390919.png)
+![image](https://github.com/dqsbl2016/study/blob/master/Spring/img/1532494390919.jpg)
 
 ``` 
 ApplicationContext允许上下文嵌套，通过保持父上下文可以维持一个上下文体系。对于Bean的查找可以在这个上下文体系中发生，首先检查当前上下文，其次是父上下文，逐级向上，这样为不同的Spring应用提供了一个共享的Bean定义环境。
