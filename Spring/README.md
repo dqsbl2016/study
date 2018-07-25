@@ -4,20 +4,20 @@
 
 官网: [spring.io](https://spring.io/)
 
-##What is Spring Framework?
+## What is Spring Framework?
 
 Spring是个Java企业级应用的开源开发框架。 它主要解决企业应用开发的复杂性，使团队专注于应用程序级的业务逻辑。
 
-##Why use Spring Framework?
+## Why use Spring Framework?
 
 * Spring是一个轻量级框架，对系统开销不大 （随着Spring不断发展，也会变得越来越重）
 * 通过依赖注入来实现松耦合（实现动态装配）
 * 通过面向切面编程，把应用业务逻辑和系统服务逻辑分离
 * Ioc容器统一管理bean生命周期和配置
 
-##How to use Spring Framework?
+## How to use Spring Framework?
 
-![image](https://github.com/dqsbl2016/study/blob/master/Spring/1532486065585.jpg)
+<center> ![image](https://github.com/dqsbl2016/study/blob/master/Spring/1532486065585.jpg)  </center>
 
 * **核心容器** 由 `spring-beans` ，`spring-core`，`spring-context`，`spring-expression(Spring Expression Language，SpEL)`4个模块组成。 
 
