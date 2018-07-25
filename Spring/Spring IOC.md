@@ -148,3 +148,256 @@ Spring IOC容器管理了我们定义的各种Bean对象及相互关系，Bean�
 
 
 
+### FileSystemXmlApplicationContext流程
+
+通过实例调用 `new FileSystemXmlApplicationContext(xmlPath)`，进入构造函数。
+
+```java
+public FileSystemXmlApplicationContext(
+			String[] configLocations, boolean refresh, @Nullable ApplicationContext parent)
+			throws BeansException {
+		super(parent);
+		setConfigLocations(configLocations);
+		if (refresh) {
+			refresh();
+		}
+	}
+```
+
+####资源定位
+
+调用父类构造函数，获取**资源加载器**。 使用的是`DefaultResourceLoader`,另外`FileSystemXmlApplicationContext`复写了`DefaultResourceLoader`中的`getResourceByPath`方法，所以获取资源类型逻辑有变化。
+
+```java
+public abstract class AbstractApplicationContext extends DefaultResourceLoader
+		implements ConfigurableApplicationContext {
+		...
+		public AbstractApplicationContext() {
+			this.resourcePatternResolver = getResourcePatternResolver();
+		}
+		...
+		protected ResourcePatternResolver getResourcePatternResolver() {
+			return new PathMatchingResourcePatternResolver(this);
+		}
+		...
+}
+```
+
+返回一个`PathMatchingResourcePatternResolver`实例, 通过构造方法初始化`resourceLoader`资源加载器为`DefaultResourceLoader`,因为传入参数`this`的类`AbstractApplicationContext`继承`DefaultResourceLoader`。
+
+```java
+public PathMatchingResourcePatternResolver(ResourceLoader resourceLoader) {
+		Assert.notNull(resourceLoader, "ResourceLoader must not be null");
+		this.resourceLoader = resourceLoader;
+	}
+```
+
+`FileSystemXmlApplicationContext`构造方法中继续调用`AbstractRefreshableConfigApplicationContext#setConfigLocations`方法，对要加载资源文件进行记录。
+
+```java
+public void setConfigLocations(@Nullable String... locations) {
+		if (locations != null) {
+			Assert.noNullElements(locations, "Config locations must not be null");
+			this.configLocations = new String[locations.length];
+			for (int i = 0; i < locations.length; i++) {
+				this.configLocations[i] = resolvePath(locations[i]).trim();
+			}
+		}
+		else {
+			this.configLocations = null;
+		}
+	}
+```
+
+#### 载入
+
+`FileSystemXmlApplicationContext`构造方法中继续调用`refresh()`，进入到`AbstractApplicationContext#refresh`。
+
+```java
+@Override
+	public void refresh() throws BeansException, IllegalStateException {
+		synchronized (this.startupShutdownMonitor) {
+			//调用容器准备刷新的方法，获取容器的当时时间，同时给容器设置同步标识
+            prepareRefresh();
+            //告诉子类启动 refreshBeanFactory()方法，Bean 定义资源文件的载入从
+            //子类的 refreshBeanFactory()方法启动
+            ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+            //为 BeanFactory 配置容器特性，例如类加载器、事件处理器等
+            prepareBeanFactory(beanFactory);
+            try {
+                    //为容器的某些子类指定特殊的 BeanPost 事件处理器
+                    postProcessBeanFactory(beanFactory);
+                    //调用所有注册的 BeanFactoryPostProcessor 的 Bean
+                    invokeBeanFactoryPostProcessors(beanFactory);
+                    //为 BeanFactory 注册 BeanPost 事件处理器.
+                    //BeanPostProcessor 是 Bean 后置处理器，用于监听容器触发的事件
+                    registerBeanPostProcessors(beanFactory);
+                    //初始化信息源，和国际化相关.
+                    initMessageSource();
+                    //初始化容器事件传播器.
+                    initApplicationEventMulticaster();
+                    //调用子类的某些特殊 Bean 初始化方法
+                    onRefresh();
+                    //为事件传播器注册事件监听器.
+                    registerListeners();
+                    //初始化所有剩余的单例 Bean
+                    finishBeanFactoryInitialization(beanFactory);
+                    //初始化容器的生命周期事件处理器，并发布容器的生命周期事件
+                    finishRefresh();
+            }
+            catch (BeansException ex) {
+                if (logger.isWarnEnabled()) {
+                    logger.warn("Exception encountered during context initialization - " +
+                                "cancelling refresh attempt: " + ex);
+                }
+                //销毁已创建的 Bean
+                destroyBeans();
+                //取消 refresh 操作，重置容器的同步标识.
+                cancelRefresh(ex);
+				// Propagate exception to caller.
+				throw ex;
+			}
+			finally {
+				// Reset common introspection caches in Spring's core, since we
+				// might not ever need metadata for singleton beans anymore...
+				resetCommonCaches();
+			}
+		}
+	}
+```
+
+bean中解析、载入、注册通过`obtainFreshBeanFactory`方法进入。
+
+```
+protected ConfigurableListableBeanFactory obtainFreshBeanFactory() {
+		refreshBeanFactory();
+		ConfigurableListableBeanFactory beanFactory = getBeanFactory();
+		if (logger.isDebugEnabled()) {
+			logger.debug("Bean factory for " + getDisplayName() + ": " + beanFactory);
+		}
+		return beanFactory;
+	}
+```
+
+调用子类`AbstractRefreshableApplicationContext`中`refreshBeanFactory`方法。
+
+```java
+@Override
+	protected final void refreshBeanFactory() throws BeansException {
+		if (hasBeanFactory()) {
+			destroyBeans();
+			closeBeanFactory();
+		}
+		try {
+			DefaultListableBeanFactory beanFactory = createBeanFactory();
+			beanFactory.setSerializationId(getId());
+			customizeBeanFactory(beanFactory);
+			loadBeanDefinitions(beanFactory);
+			synchronized (this.beanFactoryMonitor) {
+				this.beanFactory = beanFactory;
+			}
+		}
+		catch (IOException ex) {
+			throw new ApplicationContextException("I/O error parsing bean definition source for " + getDisplayName(), ex);
+		}
+	}
+```
+
+先验证是否已存在容器，如果存在则销毁，然后重新创建容器。创建一个`DefaultListableBeanFactory`容器。
+
+调用子类`AbstractXmlApplicationContext`执行装载bean定义。
+
+```java
+@Override
+	protected void loadBeanDefinitions(DefaultListableBeanFactory beanFactory) throws BeansException, IOException {
+		// Create a new XmlBeanDefinitionReader for the given BeanFactory.
+		XmlBeanDefinitionReader beanDefinitionReader = new XmlBeanDefinitionReader(beanFactory);
+		// Configure the bean definition reader with this context's
+		// resource loading environment.
+		beanDefinitionReader.setEnvironment(this.getEnvironment());
+		beanDefinitionReader.setResourceLoader(this);
+		beanDefinitionReader.setEntityResolver(new ResourceEntityResolver(this));
+		// Allow a subclass to provide custom initialization of the reader,
+		// then proceed with actually loading the bean definitions.
+		initBeanDefinitionReader(beanDefinitionReader);
+		loadBeanDefinitions(beanDefinitionReader);
+	}
+```
+
+这里会先创建一个`XmlBeanDefinitionReader`，加载上面的要加载资源文件记录。因为是`FileSystemXmlApplicationContext`作为入口，所以`getConfigResources`返回的是null，会执行`getConfigLocations`分支。
+
+```java
+protected void loadBeanDefinitions(XmlBeanDefinitionReader reader) throws BeansException, IOException {
+		Resource[] configResources = getConfigResources();
+		if (configResources != null) {
+			reader.loadBeanDefinitions(configResources);
+		}
+		String[] configLocations = getConfigLocations();
+		if (configLocations != null) {
+			reader.loadBeanDefinitions(configLocations);
+		}
+	}
+```
+
+调用其父类`AbstractBeanDefinitionReader`中`loadBeanDefinitions`读取bean定义资源。
+
+```java
+public int loadBeanDefinitions(String location, @Nullable Set<Resource> actualResources) throws BeanDefinitionStoreException {
+		ResourceLoader resourceLoader = getResourceLoader();
+		if (resourceLoader == null) {
+			throw new BeanDefinitionStoreException(
+					"Cannot import bean definitions from location [" + location + "]: no ResourceLoader available");
+		}
+
+		if (resourceLoader instanceof ResourcePatternResolver) {
+			// Resource pattern matching available.
+			try {
+				Resource[] resources = ((ResourcePatternResolver) resourceLoader).getResources(location);
+				int loadCount = loadBeanDefinitions(resources);
+				if (actualResources != null) {
+					for (Resource resource : resources) {
+						actualResources.add(resource);
+					}
+				}
+				if (logger.isDebugEnabled()) {
+					logger.debug("Loaded " + loadCount + " bean definitions from location pattern [" + location + "]");
+				}
+				return loadCount;
+			}
+			catch (IOException ex) {
+				throw new BeanDefinitionStoreException(
+						"Could not resolve bean definition resource pattern [" + location + "]", ex);
+			}
+		}
+		else {
+			// Can only load single resources by absolute URL.
+			Resource resource = resourceLoader.getResource(location);
+			int loadCount = loadBeanDefinitions(resource);
+			if (actualResources != null) {
+				actualResources.add(resource);
+			}
+			if (logger.isDebugEnabled()) {
+				logger.debug("Loaded " + loadCount + " bean definitions from location [" + location + "]");
+			}
+			return loadCount;
+		}
+	}
+
+
+@Override
+	public int loadBeanDefinitions(Resource... resources) throws BeanDefinitionStoreException {
+		Assert.notNull(resources, "Resource array must not be null");
+		int counter = 0;
+		for (Resource resource : resources) {
+			counter += loadBeanDefinitions(resource);
+		}
+		return counter;
+	}
+```
+
+通过获取上面定义的`ResourceLoader`资源加载器(`DefaultResourceLoader`)，调用`getResources`方法获取资源。因为`FileSystemXmlApplicationContext`本身就是``DefaultResourceLoader``的实现类，所以又回到了`FileSystemXmlApplicationContext`中读取资源。
+
+```java
+
+```
+
