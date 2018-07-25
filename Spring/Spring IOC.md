@@ -10,10 +10,10 @@ Spring容器并不是只有一个，可以分为二种类型。
 
 ![image](https://github.com/dqsbl2016/study/blob/master/Spring/img/1532489938612.jpg)
 
-```
-其中 BeanFactory 作为最顶层的一个接口类，它定义了 IOC 容器的基本功能规范，BeanFactory 有三个子类：ListableBeanFactory、HierarchicalBeanFactory 和 AutowireCapableBeanFactory。
-但是从上图中我们可以发现最终的默认实现类是DefaultListableBeanFactory，他实现了所有的接口。那为何要定义这么多层次的接口呢？查阅这些接口的源码和说明发现，每个接口都有他使用的场合，它主要是为了区分在Spring内部在操作过程中对象的传递和转化过程中，对对象的数据访问所做的限制。例如ListableBeanFactory接口表示这些Bean 是可列表的，而HierarchicalBeanFactory表示的是这些Bean是有继承关系的，也就是每个Bean有可能有父Bean。AutowireCapableBeanFactory接口定义Bean的自动装配规则。这四个接口共同定义了Bean的集合、Bean之间的关系、以及Bean行为.
-```
+
+>其中 BeanFactory 作为最顶层的一个接口类，它定义了 IOC 容器的基本功能规范，BeanFactory 有三个子类：ListableBeanFactory、>HierarchicalBeanFactory 和 AutowireCapableBeanFactory。
+>但是从上图中我们可以发现最终的默认实现类是DefaultListableBeanFactory，他实现了所有的接口。那为何要定义这么多层次的接口呢？查阅这些接口的源码和说明>发现，每个接口都有他使用的场合，它主要是为了区分在Spring内部在操作过程中对象的传递和转化过程中，对对象的数据访问所做的限制。例如>ListableBeanFactory接口表示这些Bean 是可列表的，而HierarchicalBeanFactory表示的是这些Bean是有继承关系的，也就是每个Bean有可能有父Bean。>AutowireCapableBeanFactory接口定义Bean的自动装配规则。这四个接口共同定义了Bean的集合、Bean之间的关系、以及Bean行为.
+
 
 ### ApplicationContext
 
@@ -21,9 +21,9 @@ Spring容器并不是只有一个，可以分为二种类型。
 
 ![image](https://github.com/dqsbl2016/study/blob/master/Spring/img/1532494390919.jpg)
 
-``` 
-ApplicationContext允许上下文嵌套，通过保持父上下文可以维持一个上下文体系。对于Bean的查找可以在这个上下文体系中发生，首先检查当前上下文，其次是父上下文，逐级向上，这样为不同的Spring应用提供了一个共享的Bean定义环境。
-```
+ 
+>ApplicationContext允许上下文嵌套，通过保持父上下文可以维持一个上下文体系。对于Bean的查找可以在这个上下文体系中发生，首先检查当前上下文，其次是父上>下文，逐级向上，这样为不同的Spring应用提供了一个共享的Bean定义环境。
+
 
 
 
@@ -31,7 +31,7 @@ ApplicationContext允许上下文嵌套，通过保持父上下文可以维持�
 
 Spring自带了多种类型的应用上下文，其中包括 `FileSystemXmlApplicationContext`,`ClassPathXmlApplicationContext`等。无论哪种方式都是通过调用`AbstractApplicationContext`中的`refresh()`方法开始IOC容器初始化工作。IOC容器的初始化就是`Bean`的`Resource`定位、载入和注册这三个基本的过程。Spring把这三个过程分开，使用不同的模块来完成，通过这样的设计让用户更灵活的对三个过程进行剪裁或扩展，定义出自己最合适的IOC容器初始化过程。
 
-###定位
+### 定位
 
 定位的过程是`Resource`定位过程。是指Bean的资源定位，由`ResourceLoader`通过统一的`Resource`接口来完成，`Resource`接口将各种形式的Bean定义资源文件封装成统一的、IOC容器可进行载入操作的对象。其中最常见的四种类型资源：
 
@@ -102,7 +102,7 @@ Spring自带了多种类型的应用上下文，其中包括 `FileSystemXmlAppli
 
   `UrlResource` 封装了`java.net.URL`，它能够被用来访问任何通过URL可以获得的对象，例如：文件、HTTP对象、FTP对象等。 所有的URL都有个标准的 String表示，这些标准前缀可以标识不同的URL类型，包括`file:`访问文件系统路径，`http: `通过HTTP协议访问的资源，`ftp: `通过FTP访问的资源等等。 
 
-####ResourceLoader
+#### ResourceLoader
 
 `ResourceLoader`接口定义了一个用于获取`Resource`的`getResource`方法。它包含很多实现类，例如`DefaultResourceLoader`实现的策略是：首先判断指定的`location`是否含有`classpath:`前缀，如果有则把`location`去掉`classpath:`前缀返回对应的`ClassPathResource`；否则就把它当做一个`URL`来处理，封装成一个`UrlResource`进行返回；如果当成`URL`处理也失败的话就把`location`对应的资源当成是一个`ClassPathResource`进行返回。 
 
@@ -134,6 +134,6 @@ Spring自带了多种类型的应用上下文，其中包括 `FileSystemXmlAppli
 
 载入过程是把用户定义好的Bean封装成IOC容器内部的数据结构，就是`BeanDefinition`。
 
-####BeanDefinition
+#### BeanDefinition
 
 Spring IOC容器管理了我们定义的各种Bean对象及相互关系，Bean对象在Spring实现中是以`BeanDefinition`来描述的。
