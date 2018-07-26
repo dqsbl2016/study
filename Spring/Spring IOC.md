@@ -136,7 +136,7 @@ Spring自带了多种类型的应用上下文，其中包括 `FileSystemXmlAppli
 
 #### BeanDefinition
 
-Spring IOC容器管理了我们定义的各种Bean对象及相互关系，Bean对象在Spring实现中是以`BeanDefinition`来描述的。
+Spring IOC容器管理了我们定义的各种Bean对象及相互关系，Bean对象在Spring实现中是以`BeanDefinition`来描述的。`BeanDefinition`的这种方式就是装饰器设计模式，对Bean的扩展和增强后依然保留OOP关系。
 
 ### 注册
 
@@ -164,7 +164,7 @@ public FileSystemXmlApplicationContext(
 	}
 ```
 
-####资源定位
+#### 资源定位
 
 调用父类构造函数，获取**资源加载器**。 使用的是`DefaultResourceLoader`(但是class类型是`AbstractApplicationContext`),另外`FileSystemXmlApplicationContext`复写了`DefaultResourceLoader`中的`getResourceByPath`方法，所以获取资源类型逻辑有变化。
 
@@ -765,7 +765,7 @@ private void parseDefaultElement(Element ele, BeanDefinitionParserDelegate deleg
 	}
 ```
 
-判断当前元素节点的命名空间，执行不同的操作。对`<import>`元素节点的处理方法`importBeanDefinitionResource`。
+判断当前元素节点的命名空间，使用`BeanDefinitionParserDelegate`对Bean定义内容进行解析。对`<import>`元素节点的处理方法`importBeanDefinitionResource`。
 
 ```java
 //解析<Import>导入元素，从给定的导入路径加载 Bean 定义资源到 Spring IOC 容器中
@@ -1199,5 +1199,142 @@ protected AbstractBeanDefinitionReader(BeanDefinitionRegistry registry) {
 
 将`beanDefinition`注册到IOC容器中，也就是`private final Map<String, BeanDefinition> beanDefinitionMap = new ConcurrentHashMap<>(256);`变量中。至此整个初始化工作完成，当然还有一些事件等等未进行跟踪查看。
 
+#### 总结
 
+* **定位**  
+  * `AbstractApplicationContext` 中变量`resourcePatternResolver`赋值`new PathMatchingResourcePatternResolver`。
+  * `PathMatchingResourcePatternResolver`中属性`resourceLoader`赋值`AbstractApplicationContext`。（资源加载器）
+  * `AbstractRefreshableConfigApplicationContext`中属性`configLocations`存储配置文件信息。
+* **载入** 
+  * 创建`DefaultListableBeanFactory`容器；
+  * 创建`XmlBeanDefinitionReader`读取器；
+  * 调用`XmlBeanDefinitionReader`读取器 `loadBeanDefinitions`方法；
+  * 获取`AbstractApplicationContext`资源加载器，并通过`getResources`获取资源；
+  * 将资源转为`Document`对象；
+  * 创建`BeanDefinitionDocumentReader`读取器；
+  * 调用 `BeanDefinitionDocumentReader`读取器`registerBeanDefinitions`方法；
+  * 通过`BeanDefinitionParserDelegate`解析`bean`的定义信息，不同元素节点不同处理；
+  * 创建`BeanDefinition`,将`Bean`内容放入`BeanDefinition`，再封装进`BeanDefinitionHolder`；
+* **注册**
+  * 通过`BeanDefinitionReaderUtils`中`registerBeanDefinition`开始注册；
+  * 执行`DefaultListableBeanFactory`中`registerBeanDefinition`注册；
+  * 将`BeanDefinition`添加到IOC容器`beanDefinitionMap`中；
+
+### 关于其他入口
+
+`FileSystemXmlApplicationContext`与`ClasspathXmlApplicationContext`主要是对文件（XML)类的初始化。
+
+`AnnotationConfigApplicationContext`是基于注解进行加载Spring的上下文。
+
+## IOC容器 依赖注入（DI） 
+
+初始化过程只是将bean的信息装载到IOC容器中，并没有对所有管理的Bean进行依赖注入，所以当前还无法使用。依赖注入包括两种情况。
+
+### 配置`lazy-init`实现预实例
+
+当`Bean`定义资源的`<Bean>`元素中配置了`lazy-init`属性时，容器将会在初始化的时候对所配置的`Bean`
+进行预实例化，`Bean` 的依赖注入在容器初始化的时候就已经完成。这样，当应用程序第一次向容器索
+取被管理的 `Bean` 时，就不用再初始化和对 `Bean` 进行依赖注入了，直接从容器中获取已经完成依赖注
+入的现成 `Bean`，可以提高应用第一次向容器获取 `Bean` 的性能。
+
+#### 源码流程
+
+上面讲到初始化通过`AbstractApplicationContext`中的`refresh`方法。其中又通过`obtainFreshBeanFactory`方法完成了载入与注册的功能。而在之后的`finishBeanFactoryInitialization`方法就是除了配置`lazy-init`属性的`bean`的依赖注入操作。
+
+```java
+protected void finishBeanFactoryInitialization(ConfigurableListableBeanFactory beanFactory) {
+		// Initialize conversion service for this context.
+		if (beanFactory.containsBean(CONVERSION_SERVICE_BEAN_NAME) &&
+				beanFactory.isTypeMatch(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class)) {
+			beanFactory.setConversionService(
+					beanFactory.getBean(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class));
+		}
+
+		// Register a default embedded value resolver if no bean post-processor
+		// (such as a PropertyPlaceholderConfigurer bean) registered any before:
+		// at this point, primarily for resolution in annotation attribute values.
+		if (!beanFactory.hasEmbeddedValueResolver()) {
+			beanFactory.addEmbeddedValueResolver(strVal -> getEnvironment().resolvePlaceholders(strVal));
+		}
+
+		// Initialize LoadTimeWeaverAware beans early to allow for registering their transformers early.
+		String[] weaverAwareNames = beanFactory.getBeanNamesForType(LoadTimeWeaverAware.class, false, false);
+		for (String weaverAwareName : weaverAwareNames) {
+			getBean(weaverAwareName);
+		}
+
+		// Stop using the temporary ClassLoader for type matching.
+		beanFactory.setTempClassLoader(null);
+
+		// Allow for caching all bean definition metadata, not expecting further changes.
+		beanFactory.freezeConfiguration();
+
+		// Instantiate all remaining (non-lazy-init) singletons.
+		beanFactory.preInstantiateSingletons();
+	}
+```
+
+具体通过调用`DefaultListableBeanFactory`中`preInstantiateSingletons`方法开始对Bean进行预实例化处理。
+
+```java
+@Override
+	public void preInstantiateSingletons() throws BeansException {
+		if (this.logger.isDebugEnabled()) {
+			this.logger.debug("Pre-instantiating singletons in " + this);
+		}
+		// Iterate over a copy to allow for init methods which in turn register new bean definitions.
+		// While this may not be part of the regular factory bootstrap, it does otherwise work fine.
+		List<String> beanNames = new ArrayList<>(this.beanDefinitionNames);
+		// Trigger initialization of all non-lazy singleton beans...
+		for (String beanName : beanNames) {
+			RootBeanDefinition bd = getMergedLocalBeanDefinition(beanName);
+			if (!bd.isAbstract() && bd.isSingleton() && !bd.isLazyInit()) {
+				if (isFactoryBean(beanName)) {
+					Object bean = getBean(FACTORY_BEAN_PREFIX + beanName);
+					if (bean instanceof FactoryBean) {
+						final FactoryBean<?> factory = (FactoryBean<?>) bean;
+						boolean isEagerInit;
+						if (System.getSecurityManager() != null && factory instanceof SmartFactoryBean) {
+							isEagerInit = AccessController.doPrivileged((PrivilegedAction<Boolean>)
+											((SmartFactoryBean<?>) factory)::isEagerInit,
+									getAccessControlContext());
+						}
+						else {
+							isEagerInit = (factory instanceof SmartFactoryBean &&
+									((SmartFactoryBean<?>) factory).isEagerInit());
+						}
+						if (isEagerInit) {
+							getBean(beanName);
+						}
+					}
+				}
+				else {
+					getBean(beanName);
+				}
+			}
+		}
+		// Trigger post-initialization callback for all applicable beans...
+		for (String beanName : beanNames) {
+			Object singletonInstance = getSingleton(beanName);
+			if (singletonInstance instanceof SmartInitializingSingleton) {
+				final SmartInitializingSingleton smartSingleton = (SmartInitializingSingleton) singletonInstance;
+				if (System.getSecurityManager() != null) {
+					AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+						smartSingleton.afterSingletonsInstantiated();
+						return null;
+					}, getAccessControlContext());
+				}
+				else {
+					smartSingleton.afterSingletonsInstantiated();
+				}
+			}
+		}
+	}
+```
+
+如果Bean设置了`lazy-init`属性，则会调用`getBean(beanName)`方法进行依赖注入。所以配置`lazy-init`属性的方式只不过是系统会做第一次`getBean`操作达到依赖注入的效果。
+
+### 通过第一次`getBean`
+
+当用户第一次通过`getBean`方法向`IOC`容器索要`Bean`时,触发该`bean`的依赖注入。
 
