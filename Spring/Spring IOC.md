@@ -2211,9 +2211,281 @@ protected BeanWrapper createBeanInstance(String beanName, RootBeanDefinition mbd
 	}
 ```
 
+通过构造函数进行实例化，因为一个`bean`对应的类中可能会有多个构造函数，而且参数也不同，所以spring会根据参数及类型去判断最终使用哪个构造函数实例化。但是判断过程比较消耗性能，所以采用缓存机制。
 
+带有参数的实例化过程非常复杂，会对参数做大量判断工作。具体调用`ConstructorResolver`中的`autowireConstructor`方法。
 
+```java
+public BeanWrapper autowireConstructor(final String beanName, final RootBeanDefinition mbd,
+			@Nullable Constructor<?>[] chosenCtors, @Nullable final Object[] explicitArgs) {
 
+		BeanWrapperImpl bw = new BeanWrapperImpl();
+		this.beanFactory.initBeanWrapper(bw);
 
+		Constructor<?> constructorToUse = null;
+		ArgumentsHolder argsHolderToUse = null;
+		Object[] argsToUse = null;
+		//explicitArgs参数为 getbean调用时传入
+		if (explicitArgs != null) {
+			argsToUse = explicitArgs;
+		}
+		else {
+            //如果没有传入参数 
+			Object[] argsToResolve = null;
+            //尝试从缓存中获取
+			synchronized (mbd.constructorArgumentLock) {
+				constructorToUse = (Constructor<?>) mbd.resolvedConstructorOrFactoryMethod;
+				if (constructorToUse != null && mbd.constructorArgumentsResolved) {
+					// Found a cached constructor...
+                    //缓存中获取
+					argsToUse = mbd.resolvedConstructorArguments;
+					if (argsToUse == null) {
+                         //配置的构造函数参数
+						argsToResolve = mbd.preparedConstructorArguments;
+					}
+				}
+			}
+            //缓存中存在
+			if (argsToResolve != null) {
+                //解析参数类型，做相应处理
+				argsToUse = resolvePreparedArguments(beanName, mbd, bw, constructorToUse, argsToResolve);
+			}
+		}
+		//没有被缓存
+		if (constructorToUse == null) {
+			// Need to resolve the constructor.
+			boolean autowiring = (chosenCtors != null ||
+					mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_CONSTRUCTOR);
+			ConstructorArgumentValues resolvedValues = null;
 
+			int minNrOfArgs;
+			if (explicitArgs != null) {
+				minNrOfArgs = explicitArgs.length;
+			}
+			else {
+                //提取配置文件中 配置的构造函数参数
+				ConstructorArgumentValues cargs = mbd.getConstructorArgumentValues();
+				resolvedValues = new ConstructorArgumentValues();
+				minNrOfArgs = resolveConstructorArguments(beanName, mbd, bw, cargs, resolvedValues);
+			}
+
+			// Take specified constructors, if any.
+			Constructor<?>[] candidates = chosenCtors;
+			if (candidates == null) {
+				Class<?> beanClass = mbd.getBeanClass();
+				try {
+					candidates = (mbd.isNonPublicAccessAllowed() ?
+							beanClass.getDeclaredConstructors() : beanClass.getConstructors());
+				}
+				catch (Throwable ex) {
+					throw new BeanCreationException(mbd.getResourceDescription(), beanName,
+							"Resolution of declared constructors on bean Class [" + beanClass.getName() +
+							"] from ClassLoader [" + beanClass.getClassLoader() + "] failed", ex);
+				}
+			}
+            //排序给定的构造函数
+			AutowireUtils.sortConstructors(candidates);
+			int minTypeDiffWeight = Integer.MAX_VALUE;
+			Set<Constructor<?>> ambiguousConstructors = null;
+			LinkedList<UnsatisfiedDependencyException> causes = null;
+
+			for (Constructor<?> candidate : candidates) {
+				Class<?>[] paramTypes = candidate.getParameterTypes();
+
+				if (constructorToUse != null && argsToUse.length > paramTypes.length) {
+					// Already found greedy constructor that can be satisfied ->
+					// do not look any further, there are only less greedy constructors left.
+					break;
+				}
+				if (paramTypes.length < minNrOfArgs) {
+					continue;
+				}
+
+				ArgumentsHolder argsHolder;
+				if (resolvedValues != null) {
+					try {
+						String[] paramNames = ConstructorPropertiesChecker.evaluate(candidate, paramTypes.length);
+						if (paramNames == null) {
+							ParameterNameDiscoverer pnd = this.beanFactory.getParameterNameDiscoverer();
+							if (pnd != null) {
+								paramNames = pnd.getParameterNames(candidate);
+							}
+						}
+						argsHolder = createArgumentArray(beanName, mbd, resolvedValues, bw, paramTypes, paramNames,
+								getUserDeclaredConstructor(candidate), autowiring);
+					}
+					catch (UnsatisfiedDependencyException ex) {
+						if (this.beanFactory.logger.isTraceEnabled()) {
+							this.beanFactory.logger.trace(
+									"Ignoring constructor [" + candidate + "] of bean '" + beanName + "': " + ex);
+						}
+						// Swallow and try next constructor.
+						if (causes == null) {
+							causes = new LinkedList<>();
+						}
+						causes.add(ex);
+						continue;
+					}
+				}
+				else {
+					// Explicit arguments given -> arguments length must match exactly.
+					if (paramTypes.length != explicitArgs.length) {
+						continue;
+					}
+					argsHolder = new ArgumentsHolder(explicitArgs);
+				}
+
+				int typeDiffWeight = (mbd.isLenientConstructorResolution() ?
+						argsHolder.getTypeDifferenceWeight(paramTypes) : argsHolder.getAssignabilityWeight(paramTypes));
+				// Choose this constructor if it represents the closest match.
+				if (typeDiffWeight < minTypeDiffWeight) {
+					constructorToUse = candidate;
+					argsHolderToUse = argsHolder;
+					argsToUse = argsHolder.arguments;
+					minTypeDiffWeight = typeDiffWeight;
+					ambiguousConstructors = null;
+				}
+				else if (constructorToUse != null && typeDiffWeight == minTypeDiffWeight) {
+					if (ambiguousConstructors == null) {
+						ambiguousConstructors = new LinkedHashSet<>();
+						ambiguousConstructors.add(constructorToUse);
+					}
+					ambiguousConstructors.add(candidate);
+				}
+			}
+
+			if (constructorToUse == null) {
+				if (causes != null) {
+					UnsatisfiedDependencyException ex = causes.removeLast();
+					for (Exception cause : causes) {
+						this.beanFactory.onSuppressedException(cause);
+					}
+					throw ex;
+				}
+				throw new BeanCreationException(mbd.getResourceDescription(), beanName,
+						"Could not resolve matching constructor " +
+						"(hint: specify index/type/name arguments for simple parameters to avoid type ambiguities)");
+			}
+			else if (ambiguousConstructors != null && !mbd.isLenientConstructorResolution()) {
+				throw new BeanCreationException(mbd.getResourceDescription(), beanName,
+						"Ambiguous constructor matches found in bean '" + beanName + "' " +
+						"(hint: specify index/type/name arguments for simple parameters to avoid type ambiguities): " +
+						ambiguousConstructors);
+			}
+
+			if (explicitArgs == null) {
+				argsHolderToUse.storeCache(mbd, constructorToUse);
+			}
+		}
+
+		try {
+			final InstantiationStrategy strategy = beanFactory.getInstantiationStrategy();
+			Object beanInstance;
+
+			if (System.getSecurityManager() != null) {
+				final Constructor<?> ctorToUse = constructorToUse;
+				final Object[] argumentsToUse = argsToUse;
+				beanInstance = AccessController.doPrivileged((PrivilegedAction<Object>) () ->
+						strategy.instantiate(mbd, beanName, beanFactory, ctorToUse, argumentsToUse),
+						beanFactory.getAccessControlContext());
+			}
+			else {
+				beanInstance = strategy.instantiate(mbd, beanName, this.beanFactory, constructorToUse, argsToUse);
+			}
+
+			bw.setBeanInstance(beanInstance);
+			return bw;
+		}
+		catch (Throwable ex) {
+			throw new BeanCreationException(mbd.getResourceDescription(), beanName,
+					"Bean instantiation via constructor failed", ex);
+		}
+	}
+```
+
+逻辑非常复杂，开始分析步骤：
+
+* 构造参数确定
+* 从缓存中获取
+* 从文件中获取
+* 确定构造函数
+* 构造函数参数处理
+* 根据实例化策略进行实例化
+
+Spring默认使用的是`CglibSubclassingInstantiationStrategy`策略；
+
+```
+final InstantiationStrategy strategy = beanFactory.getInstantiationStrategy();
+
+private InstantiationStrategy instantiationStrategy = new CglibSubclassingInstantiationStrategy();
+```
+
+而在`CglibSubclassingInstantiationStrategy`中未复写`instantiate`方法，所以会进入父类`SimpleInstantiationStrategy`中的`instantiate`方法。
+
+```java
+@Override
+	public Object instantiate(RootBeanDefinition bd, @Nullable String beanName, BeanFactory owner,
+			final Constructor<?> ctor, @Nullable Object... args) {
+
+		if (!bd.hasMethodOverrides()) {
+			if (System.getSecurityManager() != null) {
+				// use own privileged to change accessibility (when security is on)
+				AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+					ReflectionUtils.makeAccessible(ctor);
+					return null;
+				});
+			}
+			return (args != null ? BeanUtils.instantiateClass(ctor, args) : BeanUtils.instantiateClass(ctor));
+		}
+		else {
+			return instantiateWithMethodInjection(bd, beanName, owner, ctor, args);
+		}
+	}
+```
+
+这个方法中Spring会判断用户有没有使用`replace`或者`lookup`的配置方法，就是通过`!bd.hasMethodOverrides()`判断。如果没有则会通过java的反射方式直接实例化。
+
+```java
+public static <T> T instantiateClass(Constructor<T> ctor, Object... args) throws BeanInstantiationException {
+		Assert.notNull(ctor, "Constructor must not be null");
+		try {
+			ReflectionUtils.makeAccessible(ctor);
+			return (KotlinDetector.isKotlinType(ctor.getDeclaringClass()) ?
+					KotlinDelegate.instantiateClass(ctor, args) : ctor.newInstance(args));
+		}
+    ...
+}
+```
+
+否则会通过动态代理方式将`replace`或者`lookup`特性的逻辑增强设置进去，返回包含拦截器增强的代理实例。
+
+这种是带参数的实例化处理方式，那么上面的无参数实例化方式会更简单些，是通过`instantiateBean`方法进入。
+
+```java
+protected BeanWrapper instantiateBean(final String beanName, final RootBeanDefinition mbd) {
+		try {
+			Object beanInstance;
+			final BeanFactory parent = this;
+			if (System.getSecurityManager() != null) {
+				beanInstance = AccessController.doPrivileged((PrivilegedAction<Object>) () ->
+						getInstantiationStrategy().instantiate(mbd, beanName, parent),
+						getAccessControlContext());
+			}
+			else {
+				beanInstance = getInstantiationStrategy().instantiate(mbd, beanName, parent);
+			}
+			BeanWrapper bw = new BeanWrapperImpl(beanInstance);
+			initBeanWrapper(bw);
+			return bw;
+		}
+		catch (Throwable ex) {
+			throw new BeanCreationException(
+					mbd.getResourceDescription(), beanName, "Instantiation of bean failed", ex);
+		}
+	}
+```
+
+同样会根据策略判断采用哪种方式进行实例化。将实例化对象封装到`BeanWrapper`中返回。到这里实例化的过程结束了，我们回到上面的`doCreateBean`方法中，继续下一步分析。
+
+#### 参数注入
 
