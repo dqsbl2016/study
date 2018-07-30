@@ -2485,7 +2485,317 @@ protected BeanWrapper instantiateBean(final String beanName, final RootBeanDefin
 	}
 ```
 
-同样会根据策略判断采用哪种方式进行实例化。将实例化对象封装到`BeanWrapper`中返回。到这里实例化的过程结束了，我们回到上面的`doCreateBean`方法中，继续下一步分析。
+同样会根据策略判断采用哪种方式进行实例化。将实例化对象封装到`BeanWrapper`中返回。到这里实例化的过程结束了，我们回到上面的`doCreateBean`方法中，继续下一步分析。通过`applyMergedBeanDefinitionPostProcessors`调用，完成对扩展点的支持调用工作。之后会做一步依赖处理，这是处理aop的功能，将在aop中详细描述。处理完这些就进入到了属性注入环节，通过`populateBean`方法。
 
 #### 参数注入
+
+```java
+protected void populateBean(String beanName, RootBeanDefinition mbd, @Nullable BeanWrapper bw) {
+		if (bw == null) {
+			if (mbd.hasPropertyValues()) {
+				throw new BeanCreationException(
+						mbd.getResourceDescription(), beanName, "Cannot apply property values to null instance");
+			}
+			else {
+				// Skip property population phase for null instance.
+				return;
+			}
+		}
+
+		// Give any InstantiationAwareBeanPostProcessors the opportunity to modify the
+		// state of the bean before properties are set. This can be used, for example,
+		// to support styles of field injection.
+         //给InstantiationAwareBeanPostProcessors最后一次机会在属性注入前来改变bean
+		boolean continueWithPropertyPopulation = true;
+
+		if (!mbd.isSynthetic() && hasInstantiationAwareBeanPostProcessors()) {
+			for (BeanPostProcessor bp : getBeanPostProcessors()) {
+				if (bp instanceof InstantiationAwareBeanPostProcessor) {
+					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+					if (!ibp.postProcessAfterInstantiation(bw.getWrappedInstance(), beanName)) {
+						continueWithPropertyPopulation = false;
+						break;
+					}
+				}
+			}
+		}
+
+		if (!continueWithPropertyPopulation) {
+			return;
+		}
+
+		PropertyValues pvs = (mbd.hasPropertyValues() ? mbd.getPropertyValues() : null);
+
+		if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME ||
+				mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+			MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
+
+			// Add property values based on autowire by name if applicable.
+			if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME) {
+				autowireByName(beanName, mbd, bw, newPvs);
+			}
+
+			// Add property values based on autowire by type if applicable.
+			if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+				autowireByType(beanName, mbd, bw, newPvs);
+			}
+
+			pvs = newPvs;
+		}
+
+		boolean hasInstAwareBpps = hasInstantiationAwareBeanPostProcessors();
+		boolean needsDepCheck = (mbd.getDependencyCheck() != RootBeanDefinition.DEPENDENCY_CHECK_NONE);
+
+		if (hasInstAwareBpps || needsDepCheck) {
+			if (pvs == null) {
+				pvs = mbd.getPropertyValues();
+			}
+			PropertyDescriptor[] filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+			if (hasInstAwareBpps) {
+				for (BeanPostProcessor bp : getBeanPostProcessors()) {
+					if (bp instanceof InstantiationAwareBeanPostProcessor) {
+						InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+						pvs = ibp.postProcessPropertyValues(pvs, filteredPds, bw.getWrappedInstance(), beanName);
+						if (pvs == null) {
+							return;
+						}
+					}
+				}
+			}
+			if (needsDepCheck) {
+				checkDependencies(beanName, mbd, filteredPds, pvs);
+			}
+		}
+
+		if (pvs != null) {
+			applyPropertyValues(beanName, mbd, bw, pvs);
+		}
+	}
+```
+
+在这个方法中主要提供这些流程：
+
+* `InstantiationAwareBeanPostProcessors` 处理器的`postProcessAfterInstantiation`的调用
+* 根据注入类型`byname`或`byType`，提取依赖的bean,并存入`PropertyValues`中。
+* `InstantiationAwareBeanPostProcessors` 处理器中`postProcessPropertyValues`的调用；
+* 将所有`PropertyValues`填充至`beanwrapper`中。
+
+如何将`PropertyValues`填充到属性中呢，详细跟踪`applyPropertyValues`方法的调用。
+
+```java
+protected void applyPropertyValues(String beanName, BeanDefinition mbd, BeanWrapper bw, PropertyValues pvs) {
+		if (pvs.isEmpty()) {
+			return;
+		}
+
+		if (System.getSecurityManager() != null && bw instanceof BeanWrapperImpl) {
+			((BeanWrapperImpl) bw).setSecurityContext(getAccessControlContext());
+		}
+
+		MutablePropertyValues mpvs = null;
+		List<PropertyValue> original;
+
+		if (pvs instanceof MutablePropertyValues) {
+			mpvs = (MutablePropertyValues) pvs;
+			if (mpvs.isConverted()) {
+				// Shortcut: use the pre-converted values as-is.
+				try {
+					bw.setPropertyValues(mpvs);
+					return;
+				}
+				catch (BeansException ex) {
+					throw new BeanCreationException(
+							mbd.getResourceDescription(), beanName, "Error setting property values", ex);
+				}
+			}
+			original = mpvs.getPropertyValueList();
+		}
+		else {
+			original = Arrays.asList(pvs.getPropertyValues());
+		}
+
+		TypeConverter converter = getCustomTypeConverter();
+		if (converter == null) {
+			converter = bw;
+		}
+		BeanDefinitionValueResolver valueResolver = new BeanDefinitionValueResolver(this, beanName, mbd, converter);
+
+		// Create a deep copy, resolving any references for values.
+		List<PropertyValue> deepCopy = new ArrayList<>(original.size());
+		boolean resolveNecessary = false;
+		for (PropertyValue pv : original) {
+			if (pv.isConverted()) {
+				deepCopy.add(pv);
+			}
+			else {
+				String propertyName = pv.getName();
+				Object originalValue = pv.getValue();
+				Object resolvedValue = valueResolver.resolveValueIfNecessary(pv, originalValue);
+				Object convertedValue = resolvedValue;
+				boolean convertible = bw.isWritableProperty(propertyName) &&
+						!PropertyAccessorUtils.isNestedOrIndexedProperty(propertyName);
+				if (convertible) {
+					convertedValue = convertForProperty(resolvedValue, propertyName, bw, converter);
+				}
+				// Possibly store converted value in merged bean definition,
+				// in order to avoid re-conversion for every created bean instance.
+				if (resolvedValue == originalValue) {
+					if (convertible) {
+						pv.setConvertedValue(convertedValue);
+					}
+					deepCopy.add(pv);
+				}
+				else if (convertible && originalValue instanceof TypedStringValue &&
+						!((TypedStringValue) originalValue).isDynamic() &&
+						!(convertedValue instanceof Collection || ObjectUtils.isArray(convertedValue))) {
+					pv.setConvertedValue(convertedValue);
+					deepCopy.add(pv);
+				}
+				else {
+					resolveNecessary = true;
+					deepCopy.add(new PropertyValue(pv, convertedValue));
+				}
+			}
+		}
+		if (mpvs != null && !resolveNecessary) {
+			mpvs.setConverted();
+		}
+
+		// Set our (possibly massaged) deep copy.
+		try {
+			bw.setPropertyValues(new MutablePropertyValues(deepCopy));
+		}
+		catch (BeansException ex) {
+			throw new BeanCreationException(
+					mbd.getResourceDescription(), beanName, "Error setting property values", ex);
+		}
+	}
+```
+
+#### 初始化bean
+
+当属性注入完成后，会对bean进行初始化工作，通过`initializeBean`方法进入。
+
+```java
+protected Object initializeBean(final String beanName, final Object bean, @Nullable RootBeanDefinition mbd) {
+		if (System.getSecurityManager() != null) {
+			AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+				invokeAwareMethods(beanName, bean);
+				return null;
+			}, getAccessControlContext());
+		}
+		else {
+			invokeAwareMethods(beanName, bean);
+		}
+
+		Object wrappedBean = bean;
+		if (mbd == null || !mbd.isSynthetic()) {
+			wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+		}
+
+		try {
+			invokeInitMethods(beanName, wrappedBean, mbd);
+		}
+		catch (Throwable ex) {
+			throw new BeanCreationException(
+					(mbd != null ? mbd.getResourceDescription() : null),
+					beanName, "Invocation of init method failed", ex);
+		}
+		if (mbd == null || !mbd.isSynthetic()) {
+			wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+		}
+
+		return wrappedBean;
+	}
+```
+
+具体处理步骤
+
+* 激活`Aware`方法，通过`invokeAwareMethods`方法。判断是否实现指定接口，则调用指定方法。
+
+  ```java
+  private void invokeAwareMethods(final String beanName, final Object bean) {
+  		if (bean instanceof Aware) {
+  			if (bean instanceof BeanNameAware) {
+  				((BeanNameAware) bean).setBeanName(beanName);
+  			}
+  			if (bean instanceof BeanClassLoaderAware) {
+  				ClassLoader bcl = getBeanClassLoader();
+  				if (bcl != null) {
+  					((BeanClassLoaderAware) bean).setBeanClassLoader(bcl);
+  				}
+  			}
+  			if (bean instanceof BeanFactoryAware) {
+  				((BeanFactoryAware) bean).setBeanFactory(AbstractAutowireCapableBeanFactory.this);
+  			}
+  		}
+  	}
+  
+  ```
+
+* 判断扩展点是否使用，调用前置处理`postProcessBeforeInitialization`;
+
+* 执行初始化方法`invokeInitMethods`
+
+  ```java
+  protected void invokeInitMethods(String beanName, final Object bean, @Nullable RootBeanDefinition mbd)
+  			throws Throwable {
+  
+  		boolean isInitializingBean = (bean instanceof InitializingBean);
+  		if (isInitializingBean && (mbd == null || !mbd.isExternallyManagedInitMethod("afterPropertiesSet"))) {
+  			if (logger.isDebugEnabled()) {
+  				logger.debug("Invoking afterPropertiesSet() on bean with name '" + beanName + "'");
+  			}
+  			if (System.getSecurityManager() != null) {
+  				try {
+  					AccessController.doPrivileged((PrivilegedExceptionAction<Object>) () -> {
+  						((InitializingBean) bean).afterPropertiesSet();
+  						return null;
+  					}, getAccessControlContext());
+  				}
+  				catch (PrivilegedActionException pae) {
+  					throw pae.getException();
+  				}
+  			}
+  			else {
+  				((InitializingBean) bean).afterPropertiesSet();
+  			}
+  		}
+  
+  		if (mbd != null && bean.getClass() != NullBean.class) {
+  			String initMethodName = mbd.getInitMethodName();
+  			if (StringUtils.hasLength(initMethodName) &&
+  					!(isInitializingBean && "afterPropertiesSet".equals(initMethodName)) &&
+  					!mbd.isExternallyManagedInitMethod(initMethodName)) {
+  				invokeCustomInitMethod(beanName, bean, mbd);
+  			}
+  		}
+  	}
+  ```
+
+  先判断是否实现`InitializingBean`接口，执行`afterPropertiesSet`方法，然后判断是否有`init-method`方法，有则执行。
+
+* 再一次判断扩展点是否使用，调用后置处理`postProcessAfterInitialization`;
+
+#### 注册`DisposableBean`
+
+通过`registerDisposableBeanIfNecessary`方法，完成销毁方法扩展入口的绑定。
+
+#### 总结
+
+依赖注入的整个过程，差不多就是`bean`的生命周期，所以也可以用`bean`生命周期 来进行理解；
+
+* 实例化  采用策略模式来决定使用`cglib`或者java反射来实例化，以`BeanWrapper`对构造完成的对象实例进行包裹，返回相应的`BeanWrapper`实例。 
+* 为bean注入属性。
+* 判断是否实现了 `Aware`相关接口
+  * 如果实现了`BeanNameAware `接口，会调用`setBeanName `方法；
+  * 如果实现了`BeanFactoryAware `接口，会调用`setBeanFactory `方法；
+  * 如果实现了`ApplicationContextAware `接口，会调用`setApplicationContext`方法；
+* 判断是否实现`BeanPostProcessor `接口，执行`postProcessBeforeInitialization `前置方法；
+* 判断是否实现`InitializingBean `接口，执行`afterPropertiesSet `方法；
+* 判断是否配置了`init-method`方法，配置了则执行；
+* 判断是否实现`BeanPostProcessor `接口，执行`postProcessAfterInitialization `前置方法；
+* bean容器处理正常工作情况，可以进行使用；
+* 容器关闭时，判断是否实现`DisposableBean `接口，调用`destroy`方法；
+* 如果配置了`destroy-method`方法，执行配置的方法；
 
