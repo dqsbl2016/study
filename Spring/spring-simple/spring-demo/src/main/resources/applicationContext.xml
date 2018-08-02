@@ -1,2 +1,2 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<beans><bean id="sqlSessionFactory" class ="org.springframework.MyMain" name="factory"/></beans>
+<beans><bean id="factory" class ="org.springframework.MyMain" name="factory"/></beans>

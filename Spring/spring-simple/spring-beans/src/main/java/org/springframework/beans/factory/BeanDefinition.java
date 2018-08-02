@@ -2,13 +2,9 @@ package org.springframework.beans.factory;
 
 public interface BeanDefinition {
 
-    void setBeanClass(Object beanClass);
+    void setBeanClassName(Object beanClass);
 
-    Object getBeanClass();
-
-    void setBeanClassName(String beanClassName);
-
-    String getBeanClassName();
+    Object getBeanClassName();
 
     void setScope(String scope);
 
@@ -21,4 +17,6 @@ public interface BeanDefinition {
     void setFactoryBeanName( String factoryBeanName);
 
     String getFactoryBeanName();
+
+    boolean isSingleton();
 }

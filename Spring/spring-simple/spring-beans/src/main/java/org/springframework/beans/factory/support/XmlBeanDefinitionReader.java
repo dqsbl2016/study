@@ -51,8 +51,13 @@ public class XmlBeanDefinitionReader extends AbstractBeanDefinitionReader {
                     String nameAttr = ele.getAttribute("name");
                     String beanclass = ele.getAttribute("class");
                     GenericBeanDefinition genericBeanDefinition = new GenericBeanDefinition();
-                    genericBeanDefinition.setBeanClassName(nameAttr);
-                    genericBeanDefinition.setBeanClass(beanclass);
+                    if(id!= null&&!"".equals(id)){
+                        genericBeanDefinition.setFactoryBeanName(id);
+                    }else{
+                        genericBeanDefinition.setFactoryBeanName(nameAttr);
+                    }
+
+                    genericBeanDefinition.setBeanClassName(beanclass);
                     return genericBeanDefinition;
                 }
             }

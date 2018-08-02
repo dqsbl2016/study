@@ -4,7 +4,7 @@ import org.springframework.beans.factory.BeanDefinition;
 
 public class AbstractBeanDefinition implements BeanDefinition {
 
-    private String beanClassName;
+    private Object beanClassName;
 
     private String scope = "";
 
@@ -12,26 +12,16 @@ public class AbstractBeanDefinition implements BeanDefinition {
 
     private String factoryBeanName;
 
-    private Object beanClass;
+    private boolean singleton;
 
 
     @Override
-    public void setBeanClass(Object beanClass) {
-        this.beanClass = beanClass;
+    public void setBeanClassName(Object beanClass) {
+        this.beanClassName = beanClass;
     }
 
     @Override
-    public Object getBeanClass() {
-        return this.beanClass;
-    }
-
-    @Override
-    public void setBeanClassName(String beanClassName) {
-        this.beanClassName = beanClassName;
-    }
-
-    @Override
-    public String getBeanClassName() {
+    public Object getBeanClassName() {
         return this.beanClassName;
     }
 
@@ -63,5 +53,10 @@ public class AbstractBeanDefinition implements BeanDefinition {
     @Override
     public String getFactoryBeanName() {
         return this.factoryBeanName;
+    }
+
+    @Override
+    public boolean isSingleton() {
+        return this.singleton;
     }
 }
