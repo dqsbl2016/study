@@ -9,7 +9,7 @@ Spring IOC 容器对于类级别的注解和类内部的注解分为两种策略
 
 
 
-##  AnnotationConfigApplicationContext
+##  AnnotationConfigApplicationContext（注解初始化）
 
 其中`AnnotationConfigApplicationContext`中提供了2种IOC容器注册方式：
 
@@ -239,11 +239,13 @@ protected Set<BeanDefinitionHolder> doScan(String... basePackages) {
 * 遍历每一个`beandefinition`设置作用域；
 * 注册到IOC容器中，通过`registerBeanDefinition`；
 
-##  AnnotationConfigWebApplicationContext
+### `refresh`
 
-`AnnotationConfigWebApplicationContext`是`AnnotationConfigApplicationContext`的Web版。
+无论采用上面2种方式的哪种，都会调用`refresh`方法，这个与XML配置的入口执行一直。
 
-对注解Bean定义的载入不同。
+不过当执行到`AbstractRefreshableApplicationContext`中`refreshBeanFactory`方法时，调用的`loadBeanDefinitions(beanFactory)`这个方法执行的位置缺不一样了，这个是个模板方法，而当前调用的子类是`AnnotationConfigWebApplicationContext`。所以下一步进入的是`AnnotationConfigWebApplicationContext`中的`loadBeanDefinitions(beanFactory)`方法。
+
+### AnnotationConfigWebApplicationContext
 
 ```java
 @Override
@@ -311,7 +313,229 @@ protected Set<BeanDefinitionHolder> doScan(String... basePackages) {
 
 ```
 
-***暂未研究***
+这里主要包括一些准备工作；
+
+* 创建一个`AnnotatedBeanDefinitionReader`读取器
+* 创建一个`ClassPathBeanDefinitionScanner`扫描器
+* 创建一个`BeanNameGenerator`
+* 创建一个`ScopeMetadataResolver`
+* 执行`reader.register(ClassUtils.toClassArray(this.annotatedClasses));`
+
+首先进入`AnnotatedBeanDefinitionReader`的`register`方法中
+
+```java
+public void register(Class<?>... annotatedClasses) {
+		for (Class<?> annotatedClass : annotatedClasses) {
+			registerBean(annotatedClass);
+		}
+	}
+...
+public void registerBean(Class<?> annotatedClass) {
+		doRegisterBean(annotatedClass, null, null, null);
+	}
+...
+<T> void doRegisterBean(Class<T> annotatedClass, @Nullable Supplier<T> instanceSupplier, @Nullable String name,
+			@Nullable Class<? extends Annotation>[] qualifiers, BeanDefinitionCustomizer... definitionCustomizers) {
+//根据指定的注解 Bean 定义类，创建 Spring 容器中对注解 Bean 的封装的数据结构
+		AnnotatedGenericBeanDefinition abd = new AnnotatedGenericBeanDefinition(annotatedClass);
+		if (this.conditionEvaluator.shouldSkip(abd.getMetadata())) {
+			return;
+		}
+
+		abd.setInstanceSupplier(instanceSupplier);
+    //解析注解 Bean 定义的作用域，若@Scope("prototype")，则 Bean 为原型类型；
+//若@Scope("singleton")，则 Bean 为单态类型
+		ScopeMetadata scopeMetadata = this.scopeMetadataResolver.resolveScopeMetadata(abd);
+		abd.setScope(scopeMetadata.getScopeName());
+		String beanName = (name != null ? name : this.beanNameGenerator.generateBeanName(abd, this.registry));
+//处理注解 Bean 定义中的通用注解
+		AnnotationConfigUtils.processCommonDefinitionAnnotations(abd);
+    //如果在向容器注册注解 Bean 定义时，使用了额外的限定符注解，则解析限定符注解。
+//主要是配置的关于 autowiring 自动依赖注入装配的限定条件，即@Qualifier 注解
+//Spring 自动依赖注入装配默认是按类型装配，如果使用@Qualifier 则按名称
+		if (qualifiers != null) {
+			for (Class<? extends Annotation> qualifier : qualifiers) {
+				if (Primary.class == qualifier) {
+					abd.setPrimary(true);
+				}
+				else if (Lazy.class == qualifier) {
+					abd.setLazyInit(true);
+				}
+				else {
+					abd.addQualifier(new AutowireCandidateQualifier(qualifier));
+				}
+			}
+		}
+		for (BeanDefinitionCustomizer customizer : definitionCustomizers) {
+			customizer.customize(abd);
+		}
+
+		BeanDefinitionHolder definitionHolder = new BeanDefinitionHolder(abd, beanName);
+    //根据注解 Bean 定义类中配置的作用域，创建相应的代理对象
+		definitionHolder = AnnotationConfigUtils.applyScopedProxyMode(scopeMetadata, definitionHolder, this.registry);
+		BeanDefinitionReaderUtils.registerBeanDefinition(definitionHolder, this.registry);
+	}
+```
+
+这里操作变得复杂，进行下业务梳理
+
+* 使用注解元数据解析器解析注解Bean中关于作用域的配置
+
+* 解析作用域元数据 通过`resolveScopeMetadata`方法
+
+  ```java
+  public ScopeMetadata resolveScopeMetadata(BeanDefinition definition) {
+  		ScopeMetadata metadata = new ScopeMetadata();
+  		if (definition instanceof AnnotatedBeanDefinition) {
+  			AnnotatedBeanDefinition annDef = (AnnotatedBeanDefinition) definition;
+  			AnnotationAttributes attributes = AnnotationConfigUtils.attributesFor(
+  					annDef.getMetadata(), this.scopeAnnotationType);
+  			if (attributes != null) {
+  				metadata.setScopeName(attributes.getString("value"));
+  				ScopedProxyMode proxyMode = attributes.getEnum("proxyMode");
+  				if (proxyMode == ScopedProxyMode.DEFAULT) {
+  					proxyMode = this.defaultProxyMode;
+  				}
+  				metadata.setScopedProxyMode(proxyMode);
+  			}
+  		}
+  		return metadata;
+  	}
+  ```
+
+* 使用 `AnnotationConfigUtils` 的 `processCommonDefinitionAnnotations` 方法处理注解 Bean
+  定义类中通用的注解。
+
+  ```java
+  static void processCommonDefinitionAnnotations(AnnotatedBeanDefinition abd, AnnotatedTypeMetadata metadata) {
+  		AnnotationAttributes lazy = attributesFor(metadata, Lazy.class);
+  		if (lazy != null) {
+  			abd.setLazyInit(lazy.getBoolean("value"));
+  		}
+  		else if (abd.getMetadata() != metadata) {
+  			lazy = attributesFor(abd.getMetadata(), Lazy.class);
+  			if (lazy != null) {
+  				abd.setLazyInit(lazy.getBoolean("value"));
+  			}
+  		}
+  
+  		if (metadata.isAnnotated(Primary.class.getName())) {
+  			abd.setPrimary(true);
+  		}
+  		AnnotationAttributes dependsOn = attributesFor(metadata, DependsOn.class);
+  		if (dependsOn != null) {
+  			abd.setDependsOn(dependsOn.getStringArray("value"));
+  		}
+  
+  		if (abd instanceof AbstractBeanDefinition) {
+  			AbstractBeanDefinition absBd = (AbstractBeanDefinition) abd;
+  			AnnotationAttributes role = attributesFor(metadata, Role.class);
+  			if (role != null) {
+  				absBd.setRole(role.getNumber("value").intValue());
+  			}
+  			AnnotationAttributes description = attributesFor(metadata, Description.class);
+  			if (description != null) {
+  				absBd.setDescription(description.getString("value"));
+  			}
+  		}
+  	}
+  ```
+
+  通用注解只包括`lazy`，`Primary`，`DependsOn`，`Role`，`Description`这些标签的处理。
+
+* 使用` AnnotationConfigUtils `的` applyScopedProxyMode` 方法创建对于作用域的代理对象。
+
+  ```java
+  static BeanDefinitionHolder applyScopedProxyMode(
+  			ScopeMetadata metadata, BeanDefinitionHolder definition, BeanDefinitionRegistry registry) {
+  
+  		ScopedProxyMode scopedProxyMode = metadata.getScopedProxyMode();
+  		if (scopedProxyMode.equals(ScopedProxyMode.NO)) {
+  			return definition;
+  		}
+  		boolean proxyTargetClass = scopedProxyMode.equals(ScopedProxyMode.TARGET_CLASS);
+  		return ScopedProxyCreator.createScopedProxy(definition, registry, proxyTargetClass);
+  	}
+  ```
+
+  通过`ScopedProxyCreator.createScopedProxy(definition, registry, proxyTargetClass);`创建对于作用域的代理对象。
+
+  ```java
+  public static BeanDefinitionHolder createScopedProxy(
+  			BeanDefinitionHolder definitionHolder, BeanDefinitionRegistry registry, boolean proxyTargetClass) {
+  		return ScopedProxyUtils.createScopedProxy(definitionHolder, registry, proxyTargetClass);
+  	}
+  ...
+  public static BeanDefinitionHolder createScopedProxy(BeanDefinitionHolder definition,
+  			BeanDefinitionRegistry registry, boolean proxyTargetClass) {
+  
+  		String originalBeanName = definition.getBeanName();
+  		BeanDefinition targetDefinition = definition.getBeanDefinition();
+  		String targetBeanName = getTargetBeanName(originalBeanName);
+  
+  		// Create a scoped proxy definition for the original bean name,
+  		// "hiding" the target bean in an internal target definition.
+  		RootBeanDefinition proxyDefinition = new RootBeanDefinition(ScopedProxyFactoryBean.class);
+  		proxyDefinition.setDecoratedDefinition(new BeanDefinitionHolder(targetDefinition, targetBeanName));
+  		proxyDefinition.setOriginatingBeanDefinition(targetDefinition);
+  		proxyDefinition.setSource(definition.getSource());
+  		proxyDefinition.setRole(targetDefinition.getRole());
+  
+  		proxyDefinition.getPropertyValues().add("targetBeanName", targetBeanName);
+  		if (proxyTargetClass) {
+  			targetDefinition.setAttribute(AutoProxyUtils.PRESERVE_TARGET_CLASS_ATTRIBUTE, Boolean.TRUE);
+  			// ScopedProxyFactoryBean's "proxyTargetClass" default is TRUE, so we don't need to set it explicitly here.
+  		}
+  		else {
+  			proxyDefinition.getPropertyValues().add("proxyTargetClass", Boolean.FALSE);
+  		}
+  
+  		// Copy autowire settings from original bean definition.
+  		proxyDefinition.setAutowireCandidate(targetDefinition.isAutowireCandidate());
+  		proxyDefinition.setPrimary(targetDefinition.isPrimary());
+  		if (targetDefinition instanceof AbstractBeanDefinition) {
+  			proxyDefinition.copyQualifiersFrom((AbstractBeanDefinition) targetDefinition);
+  		}
+  
+  		// The target bean should be ignored in favor of the scoped proxy.
+  		targetDefinition.setAutowireCandidate(false);
+  		targetDefinition.setPrimary(false);
+  
+  		// Register the target bean as separate bean in the factory.
+  		registry.registerBeanDefinition(targetBeanName, targetDefinition);
+  
+  		// Return the scoped proxy definition as primary bean definition
+  		// (potentially an inner bean).
+  		return new BeanDefinitionHolder(proxyDefinition, originalBeanName, definition.getAliases());
+  	}
+  ```
+
+  主要创建一份代理对象，并且注入到IOC容器中，代理对象命名规则为`scopedTarget.`+`originalBeanName（原BeanName）`。
+
+* 通过 `BeanDefinitionReaderUtils `向容器注册 Bean。
+
+  ```java
+  public static void registerBeanDefinition(
+  			BeanDefinitionHolder definitionHolder, BeanDefinitionRegistry registry)
+  			throws BeanDefinitionStoreException {
+  
+  		// Register bean definition under primary name.
+  		String beanName = definitionHolder.getBeanName();
+  		registry.registerBeanDefinition(beanName, definitionHolder.getBeanDefinition());
+  
+  		// Register aliases for bean name, if any.
+  		String[] aliases = definitionHolder.getAliases();
+  		if (aliases != null) {
+  			for (String alias : aliases) {
+  				registry.registerAlias(beanName, alias);
+  			}
+  		}
+  	}
+  ```
+
+  具体逻辑与XML方式一致，注册到IOC容器，并注册别名容器。
+
+**具体如何处理详细标签未深入了解 **
 
 
 
