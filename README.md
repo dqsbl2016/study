@@ -1,4 +1,4 @@
-> **Our record way of study !**
+> **Our study records !**
 
 # Spring
 
