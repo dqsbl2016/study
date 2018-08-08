@@ -1939,3 +1939,75 @@ public AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException 
 
 * JDK代理
 
+  * 被代理类需要实现接口。
+
+  * 创建自定义增强类，需要实现InvocationHandler接口
+
+    ```java
+    public class myDemo implements InvocationHandler{
+        private Object target;
+        
+        public MyDemo(Object target){
+            //需要调用父类构造
+            super();
+            this.target = target;
+        }
+        @Override
+        public Object invoke(Object proxy,Method method,Object[] args) {
+            
+            //执行方法前置操作
+            
+            //执行目标对象方法
+            Object result = mehtod.invoke(target,args);
+            
+            //执行方法后置操作
+        }
+        public Object getProxy() {
+            return Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(),
+                                         target.getClass().getInterfaces(),this);
+        }
+        
+    }
+    
+    ```
+
+* CGLIB
+
+  CGLIB是一个强大的高性能的代码生成包。底层是通过使用一个小而快的字节码处理框架ASM，来转换字节码并生成新的类。
+
+  * 示例
+
+    实现`MethodInterceptor `接口，这个是CGLIB提供的包。
+
+    ```java
+    public class myDemoCglib implements MethodInterceptor{
+        @Override
+        public Object intercept(Object obj,Method method,Object[] args,MethodProxy proxy){
+            //执行前置操作
+            //执行目标方法
+            Object result = proxy.invokeSuper(obj,args);
+            
+            //执行后置操作
+            return result;
+        }
+    }
+    
+    public class mainDemo{
+        public static void main(String[] args){
+            Enhancer enhancer = new Enhancer();
+            enhancer.setSuperclass(mainDemo.class);
+            enhancer.serCallback(new myDemoCglib());
+            
+            mainDemo demo = (mainDemo)enhancer.create();
+            demo.test();
+        }
+        public void test(){
+            //执行内容
+        }
+    }
+    
+    ```
+
+
+
+**动态代理需要更细入了解原理**

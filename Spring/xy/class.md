@@ -1,22 +1,130 @@
-# Spring-Beans
+# Spring Interfaces and Class
 
-## factory
-
-### BeanFactory
+## BeanFactory
 
 Spring Bean容器的根接口。提供多种获取Bean方法接口。
 
-### ListableBeanFactory
+* `ListableBeanFactory`
 
-继承`BeanFactory`接口，获取Bean的集合，一次获取全部Bean 而不是一个bean。
+  继承`BeanFactory`接口，获取Bean的集合，一次获取全部Bean 而不是一个bean。
 
-### HierarchicalBeanFactory
+* `HierarchicalBeanFactory`
 
-继承`BeanFactory`接口， 提供上一级容器的访问功能。
+  继承`BeanFactory`接口， 提供上一级容器的访问功能。
 
-### AutowireCapableBeanFactory
+  * `ConfigurableBeanFactory`
 
-继承`BeanFactory`接口，实现对已存在实例的管理。
+* `AutowireCapableBeanFactory`
+
+  继承`BeanFactory`接口，实现对已存在实例的管理。
+
+## Resource
+
+* `ClassPathResource `  class  
+
+  通过`ClassLoader` 获取资源
+
+* `FileSystemResource ` class
+
+  通过`file`获取资源
+
+* `ServletContextResource` class 
+
+  通过`ServletContext` 获取资源
+
+* `UrlResource` class
+
+  通过`url`或`uri` 获取资源
+
+
+
+## ResourceLoader
+
+提供 classpath下单资源文件的载入 （Classpath:）
+
+- `ResourcePatternResolver`
+
+  提供了多资源文件的载入 （Classpath*:）
+
+  - `PathMatchingResourcePatternResolver` class
+
+    通过与`ResourceLoader`关联关系，实例化的时候传入`ResourceLoader`具体实现，来对文件进行解析。
+
+- `applicationContext` 
+
+##  BeanDefinitionReader
+
+加载、解析Bean内容。
+
+- `XmlBeanDefinitionReader`  class
+
+  针对XML文件加载、解析。
+
+- `PropertiesBeanDefinitionReader` class
+
+  针对Properties文件加载、解析。
+
+- `GroovyBeanDefinitionReader` class
+
+  
+
+##  BeanDefinitionDocumentReader
+
+- `DefaultBeanDefinitionDocumentReader`  class
+
+  document结构的解析bean。
+
+##  BeanDefinitionParserDelegate  class
+
+对`<bean>`、各种集合类型等标签的解析处理。
+
+## BeanMetadataElement
+
+bean元数据元素
+
+- `BeanDefinition` 
+
+  存储bean详细信息。
+
+  - `AnnotatedGenericBeanDefinition`  class
+
+  - `RootBeanDefinition` class
+
+    一版如果bean存在层级关系，父级用`RootBeanDefinition` 表示，否则就直接使用`RootBeanDefinition` 表示
+
+  - `ChildBeanDefinition` class
+
+    如果存在层级关系，子级的使用`ChildBeanDefinition` 表示
+
+  - `GenericBeanDefinition`  class
+
+    一站式服务类
+
+- `BeanDefinitionHolder`
+
+- `BeanDefinitionReaderUtils`
+
+  提供的公共静态处理
+
+## BeanDefinitionRegistry
+
+针对`beandefinition`的管理
+
+* `DefaultListableBeanFactory`
+
+  
+
+* `GenericApplicationContext`
+
+  
+
+
+
+
+
+
+
+
 
 
 
