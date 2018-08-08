@@ -21,6 +21,9 @@
     * `XmlBeanDefinitionReader`  class
     * `PropertiesBeanDefinitionReader` class
     * `GroovyBeanDefinitionReader` class
+  * `AnnotatedBeanDefinitionReader` 
+  * `ClassPathScanningCandidateComponentProvider`
+    * `ClassPathBeanDefinitionScanner` class
   * `BeanDefinitionDocumentReader`
     * `DefaultBeanDefinitionDocumentReader`  class
   * `BeanDefinitionParserDelegate`  class
