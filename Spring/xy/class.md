@@ -118,9 +118,17 @@ bean元数据元素
 
   
 
+## BeanPostProcessor
 
+提供前置 后置处理器
 
+`postProcessBeforeInitialization`
 
+## InstantiationAwareBeanPostProcessor
+
+提供前置 后置处理器
+
+`postProcessBeforeInstantiation`
 
 
 

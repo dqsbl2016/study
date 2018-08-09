@@ -21,12 +21,14 @@ public interface FactoryBean<T> {
 
 
 
+
+
 举个例子：
 
 如果传统方式  定义个Car的类
 
 ```java
-public class Car{
+public class Beanfactory{
     private int maxSpeed;
     private String brand;
     private double price;
