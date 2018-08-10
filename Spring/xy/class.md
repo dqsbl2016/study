@@ -116,23 +116,44 @@ bean元数据元素
 
 * `GenericApplicationContext`
 
+
+
+## BeanWrapper
+
+对bean实例的包装。
+
+* `BeanWrapperImpl`
+
+  它包装了一个bean对象，缓存了bean的内省结果 ,并可以访问bean的属性、设置bean的属性值 。
+
   
+
+
 
 ## BeanPostProcessor
 
-提供前置 后置处理器
+提供对象初始化前置 后置处理器
 
 `postProcessBeforeInitialization`
 
+``postProcessAfterInitialization``
+
 ## InstantiationAwareBeanPostProcessor
 
-提供前置 后置处理器
+继承于`BeanPostProcessor`,  提供对象实例化前置 后置处理器,所以这个接口会存在5个方法。
 
 `postProcessBeforeInstantiation`
 
+`postProcessAfterInstantiation`
 
+`postProcessPropertyValues`修改属性
 
+过程：
 
+* `postProcessBeforeInstantiation`方法是最先执行的方法，它在目标对象实例化之前调用，该方法的返回值类型是Object，我们可以返回任何类型的值。由于这个时候目标对象还未实例化，所以这个返回值可以用来代替原本该生成的目标对象的实例(比如代理对象)。如果该方法的返回值代替原本该生成的目标对象，后续只有`postProcessAfterInitialization`方法会调用，其它方法不再调用；否则按照正常的流程走
+* `postProcessAfterInstantiation`方法在目标对象实例化之后调用，这个时候对象已经被实例化，但是该实例的属性还未被设置，都是null。因为它的返回值是决定要不要调用`postProcessPropertyValues`方法的其中一个因素（因为还有一个因素是`mbd.getDependencyCheck()`）；如果该方法返回false,并且不需要check，那么`postProcessPropertyValues`就会被忽略不执行；如果返回true，`postProcessPropertyValues`就会被执行。
+* `postProcessPropertyValues`方法对属性值进行修改(这个时候属性值还未被设置，但是我们可以修改原本该设置进去的属性值)。如果`postProcessAfterInstantiation`方法返回false，该方法可能不会被调用。可以在该方法内对属性值进行修改
+* 父接口`BeanPostProcessor`的2个方法`postProcessBeforeInitialization`和`postProcessAfterInitialization`都是在目标对象被实例化之后，并且属性也被设置之后调用的。
 
 
 
@@ -202,4 +223,6 @@ bean元数据元素
 
 
 
- 
+ ## AbstractNestablePropertyAccessor
+
+* `wrappedObject`  存放实例化的bean
