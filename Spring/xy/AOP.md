@@ -1248,7 +1248,7 @@ public Object postProcessAfterInitialization(@Nullable Object bean, String beanN
 	}
 ```
 
-首先会调用`postProcessBeforeInstantiation`实例化之前操作，首先验证如果beanName有效，或者未被处理过。 然后判断是否需要代理，此时是`(this.advisedBeans.containsKey(cacheKey)`应该为false，
+首先会调用`postProcessBeforeInstantiation`实例化之前操作，首先验证如果beanName有效，或者未被处理过。 然后判断是否需要代理，此时是`(this.advisedBeans.containsKey(cacheKey)`应该为false，后面的判断也不会执行，这个时候如果是xml的方式，则会获取到
 
 
 
