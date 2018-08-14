@@ -226,3 +226,65 @@ bean元数据元素
  ## AbstractNestablePropertyAccessor
 
 * `wrappedObject`  存放实例化的bean
+
+
+
+
+
+
+
+# Annotation
+
+## @ComponentScan
+
+默认会扫描与配置类相同的包，会扫描这个包以及这个包下的所有子包，查找带有@Component注解的类。
+
+此外Spring支持将 `@Named` java 注入规范 ，作为@Component注解的替代方案。两者之间有一些细微的差异，但是大多数场景中，他们是可以互相替换的。
+
+* 直接使用，会扫描与配置类相同的包
+
+  ```java
+  package org.util
+  
+  @ComponentScan
+  public class demo(){
+  }
+  
+  ```
+
+* 设置指定扫描的包
+
+  ```java
+  package org.util
+  
+      @ComponentScan("org.com")
+      public class demo(){
+      }
+  ```
+
+  * 也可以扫描多个包
+
+    ```java
+    package org.util
+    
+        @ComponentScan(basePackages={"org.com","org.cpo"})
+        public class demo(){
+        }
+    ```
+
+  但是String类型不安全
+
+  ```java
+  package org.util
+  
+      @ComponentScan(basePackageClasses={"com.class","cpo.class"})
+      public class demo(){
+      }
+  ```
+
+## @ComponentScans
+
+`@ComponentScan` 的集合配置。 多注解方式的实现。
+
+
+
