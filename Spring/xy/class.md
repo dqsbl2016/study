@@ -155,6 +155,36 @@ bean元数据元素
 * `postProcessPropertyValues`方法对属性值进行修改(这个时候属性值还未被设置，但是我们可以修改原本该设置进去的属性值)。如果`postProcessAfterInstantiation`方法返回false，该方法可能不会被调用。可以在该方法内对属性值进行修改
 * 父接口`BeanPostProcessor`的2个方法`postProcessBeforeInitialization`和`postProcessAfterInitialization`都是在目标对象被实例化之后，并且属性也被设置之后调用的。
 
+## HandlerMethod  
+
+封装方法的定义相关的信息，如类、方法、参数等。
+
+* `InvocableHandlerMethod`  添加参数准备，数据绑定工厂，方法调用
+
+  执行使用@ModelAttribute注解会使用 
+
+  * `ServletInvocableHandlerMethod`  添加返回值处理职责，ResponseStatus处理
+
+    执行http相关方法会使用,比如调用处理执行 ，这个里面继承了上面的所有处理方法。
+
+    
+
+## WebDataBinderFactory
+
+创建WebDataBinder的工厂。
+
+* `DefaultDataBinderFactory`   默认实现，主要是创建实现
+  * `InitBinderDataBinderFactory`  增加初始化实现
+    * `ServletRequestDataBinderFactory`
+
+## ModelFactory
+
+用来维护model，包括初始化及将model中相应参数值更新到sessionAttributes中。
+
+
+
+
+
 
 
 # 属性

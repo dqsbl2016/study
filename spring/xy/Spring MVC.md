@@ -1705,7 +1705,420 @@ protected ModelAndView invokeHandlerMethod(HttpServletRequest request,
 
 这里的操作主要完成的就是将request的参数与方法参数进行数据绑定，然后会调用方法执行。
 
-**需要细入**
+需要先了解spring的定义
+
+* WebDataBinderFactory   一个WebDataBinder的工厂，负责创建WebDataBinder。
+
+  看一下代码中逻辑，调用`getDataBinderFactory`方法，通过HandlerMethod获取到一个具体的WebDataBinder工厂。
+
+  ```java
+  private WebDataBinderFactory getDataBinderFactory(HandlerMethod handlerMethod) throws Exception {
+  		Class<?> handlerType = handlerMethod.getBeanType();
+  		Set<Method> methods = this.initBinderCache.get(handlerType);
+  		if (methods == null) {
+  			methods = MethodIntrospector.selectMethods(handlerType, INIT_BINDER_METHODS);
+  			this.initBinderCache.put(handlerType, methods);
+  		}
+  		List<InvocableHandlerMethod> initBinderMethods = new ArrayList<>();
+  		// Global methods first
+  		this.initBinderAdviceCache.forEach((clazz, methodSet) -> {
+  			if (clazz.isApplicableToBeanType(handlerType)) {
+  				Object bean = clazz.resolveBean();
+  				for (Method method : methodSet) {
+  					initBinderMethods.add(createInitBinderMethod(bean, method));
+  				}
+  			}
+  		});
+  		for (Method method : methods) {
+  			Object bean = handlerMethod.getBean();
+  			initBinderMethods.add(createInitBinderMethod(bean, method));
+  		}
+  		return createDataBinderFactory(initBinderMethods);
+  	}
+  ```
+
+  首先获取handlerMethod的beantype，然后在binder中获取是否有对应的方法列表。
+
+  然后将方法封装为`InvocableHandlerMethod` 以便对齐参数进行绑定操作。最后返回一个`ServletRequestDataBinderFactory`的WebDataBinderFactory  。
+
+* `ModelFactory`
+
+  返回一个对Model处理的工厂
+
+* `ServletInvocableHandlerMethod`  新建一个ServletInvocableHandlerMethod
+
+  进行属性设置，例如使用哪个数据绑定工厂，方法参数详情，返回值详情。
+
+* `ModelAndViewContainer`  创建一个`ModelAndViewContainer`容器
+
+* `modelFactory.initModel(webRequest, mavContainer, invocableMethod);`
+
+  通过调用`ModelFactory`，对model 进行属性绑定，并放入到``ModelAndViewContainer`  `容器内。
+
+* 利用反射机制，调用请求方法
+
+  ```java
+  public void invokeAndHandle(ServletWebRequest webRequest, ModelAndViewContainer mavContainer,
+  			Object... providedArgs) throws Exception {
+  
+  		Object returnValue = invokeForRequest(webRequest, mavContainer, providedArgs);
+  		setResponseStatus(webRequest);
+  
+  		if (returnValue == null) {
+  			if (isRequestNotModified(webRequest) || getResponseStatus() != null || mavContainer.isRequestHandled()) {
+  				mavContainer.setRequestHandled(true);
+  				return;
+  			}
+  		}
+  		else if (StringUtils.hasText(getResponseStatusReason())) {
+  			mavContainer.setRequestHandled(true);
+  			return;
+  		}
+  
+  		mavContainer.setRequestHandled(false);
+  		Assert.state(this.returnValueHandlers != null, "No return value handlers");
+  		try {
+  			this.returnValueHandlers.handleReturnValue(
+  					returnValue, getReturnValueType(returnValue), mavContainer, webRequest);
+  		}
+  		catch (Exception ex) {
+  			if (logger.isTraceEnabled()) {
+  				logger.trace(getReturnValueHandlingErrorMessage("Error handling return value", returnValue), ex);
+  			}
+  			throw ex;
+  		}
+  	}
+  ```
+
+  调用请求方法后，将返回结果放入到`this.returnValueHandlers.handleReturnValue(      returnValue, getReturnValueType(returnValue), mavContainer, webRequest);`中。
+
+* 通过调用`getModelAndView`返回modelAndView
+
+##### processDispatchResult
+
+执行异常处理与结果处理
+
+```java
+private void processDispatchResult(HttpServletRequest request, HttpServletResponse response,
+			@Nullable HandlerExecutionChain mappedHandler, @Nullable ModelAndView mv,
+			@Nullable Exception exception) throws Exception {
+
+		boolean errorView = false;
+
+		if (exception != null) {
+			if (exception instanceof ModelAndViewDefiningException) {
+				logger.debug("ModelAndViewDefiningException encountered", exception);
+				mv = ((ModelAndViewDefiningException) exception).getModelAndView();
+			}
+			else {
+				Object handler = (mappedHandler != null ? mappedHandler.getHandler() : null);
+				mv = processHandlerException(request, response, handler, exception);
+				errorView = (mv != null);
+			}
+		}
+
+		// Did the handler return a view to render?
+		if (mv != null && !mv.wasCleared()) {
+			render(mv, request, response);
+			if (errorView) {
+				WebUtils.clearErrorRequestAttributes(request);
+			}
+		}
+		else {
+			if (logger.isDebugEnabled()) {
+				logger.debug("Null ModelAndView returned to DispatcherServlet with name '" + getServletName() +
+						"': assuming HandlerAdapter completed request handling");
+			}
+		}
+
+		if (WebAsyncUtils.getAsyncManager(request).isConcurrentHandlingStarted()) {
+			// Concurrent handling started during a forward
+			return;
+		}
+
+		if (mappedHandler != null) {
+			mappedHandler.triggerAfterCompletion(request, response, null);
+		}
+	}
+```
+
+异常没有进行抛出，Spring会进行处理。
+
+如果异常类型为`ModelAndViewDefiningException`，spring会获取异常视图进行处理返回，
+
+否则会通过`processHandlerException`进行处理，返回对应视图。
+
+###### `processHandlerException`
+
+```java
+protected ModelAndView processHandlerException(HttpServletRequest request, HttpServletResponse response,
+			@Nullable Object handler, Exception ex) throws Exception {
+
+		// Check registered HandlerExceptionResolvers...
+		ModelAndView exMv = null;
+		if (this.handlerExceptionResolvers != null) {
+			for (HandlerExceptionResolver handlerExceptionResolver : this.handlerExceptionResolvers) {
+				exMv = handlerExceptionResolver.resolveException(request, response, handler, ex);
+				if (exMv != null) {
+					break;
+				}
+			}
+		}
+		if (exMv != null) {
+			if (exMv.isEmpty()) {
+				request.setAttribute(EXCEPTION_ATTRIBUTE, ex);
+				return null;
+			}
+			// We might still need view name translation for a plain error model...
+			if (!exMv.hasView()) {
+				String defaultViewName = getDefaultViewName(request);
+				if (defaultViewName != null) {
+					exMv.setViewName(defaultViewName);
+				}
+			}
+			if (logger.isDebugEnabled()) {
+				logger.debug("Handler execution resulted in exception - forwarding to resolved error view: " + exMv, ex);
+			}
+			WebUtils.exposeErrorRequestAttributes(request, ex, getServletName());
+			return exMv;
+		}
+
+		throw ex;
+	}
+```
+
+如果初始化时配置了异常处理器，则用对应处理器进行处理，再判断是否有视图，有则返回视图。否则直接抛出异常。
+
+###### render
+
+如果没有异常或有modelAndView内容，将执行Render操作
+
+```java
+protected void render(ModelAndView mv, HttpServletRequest request, HttpServletResponse response) throws Exception {
+		// Determine locale for request and apply it to the response.
+		Locale locale =
+				(this.localeResolver != null ? this.localeResolver.resolveLocale(request) : request.getLocale());
+		response.setLocale(locale);
+
+		View view;
+		String viewName = mv.getViewName();
+		if (viewName != null) {
+			// We need to resolve the view name.
+			view = resolveViewName(viewName, mv.getModelInternal(), locale, request);
+			if (view == null) {
+				throw new ServletException("Could not resolve view with name '" + mv.getViewName() +
+						"' in servlet with name '" + getServletName() + "'");
+			}
+		}
+		else {
+			// No need to lookup: the ModelAndView object contains the actual View object.
+			view = mv.getView();
+			if (view == null) {
+				throw new ServletException("ModelAndView [" + mv + "] neither contains a view name nor a " +
+						"View object in servlet with name '" + getServletName() + "'");
+			}
+		}
+
+		// Delegate to the View object for rendering.
+		if (logger.isDebugEnabled()) {
+			logger.debug("Rendering view [" + view + "] in DispatcherServlet with name '" + getServletName() + "'");
+		}
+		try {
+			if (mv.getStatus() != null) {
+				response.setStatus(mv.getStatus().value());
+			}
+			view.render(mv.getModelInternal(), request, response);
+		}
+		catch (Exception ex) {
+			if (logger.isDebugEnabled()) {
+				logger.debug("Error rendering view [" + view + "] in DispatcherServlet with name '" +
+						getServletName() + "'", ex);
+			}
+			throw ex;
+		}
+	}
+```
+
+首先获取国际化处理内容，然后会根据mv选择合适的视图进行渲染，通过`resolveViewName`方法。
+
+```java
+protected View resolveViewName(String viewName, @Nullable Map<String, Object> model,
+			Locale locale, HttpServletRequest request) throws Exception {
+
+		if (this.viewResolvers != null) {
+			for (ViewResolver viewResolver : this.viewResolvers) {
+				View view = viewResolver.resolveViewName(viewName, locale);
+				if (view != null) {
+					return view;
+				}
+			}
+		}
+		return null;
+	}
+```
+
+先获取初始化时配置的视图解析器，遍历来解析视图
+
+```java
+public View resolveViewName(String viewName, Locale locale) throws Exception {
+		if (!isCache()) {
+			return createView(viewName, locale);
+		}
+		else {
+			Object cacheKey = getCacheKey(viewName, locale);
+			View view = this.viewAccessCache.get(cacheKey);
+			if (view == null) {
+				synchronized (this.viewCreationCache) {
+					view = this.viewCreationCache.get(cacheKey);
+					if (view == null) {
+						// Ask the subclass to create the View object.
+						view = createView(viewName, locale);
+						if (view == null && this.cacheUnresolved) {
+							view = UNRESOLVED_VIEW;
+						}
+						if (view != null) {
+							this.viewAccessCache.put(cacheKey, view);
+							this.viewCreationCache.put(cacheKey, view);
+							if (logger.isTraceEnabled()) {
+								logger.trace("Cached view [" + cacheKey + "]");
+							}
+						}
+					}
+				}
+			}
+			return (view != UNRESOLVED_VIEW ? view : null);
+		}
+	}
+```
+
+如果不存在缓存，直接创建视图
+
+```java
+protected View createView(String viewName, Locale locale) throws Exception {
+		// If this resolver is not supposed to handle the given view,
+		// return null to pass on to the next resolver in the chain.
+		if (!canHandle(viewName, locale)) {
+			return null;
+		}
+		// Check for special "redirect:" prefix.
+		if (viewName.startsWith(REDIRECT_URL_PREFIX)) {
+			String redirectUrl = viewName.substring(REDIRECT_URL_PREFIX.length());
+			RedirectView view = new RedirectView(redirectUrl, isRedirectContextRelative(), isRedirectHttp10Compatible());
+			String[] hosts = getRedirectHosts();
+			if (hosts != null) {
+				view.setHosts(hosts);
+			}
+			return applyLifecycleMethods(viewName, view);
+		}
+		// Check for special "forward:" prefix.
+		if (viewName.startsWith(FORWARD_URL_PREFIX)) {
+			String forwardUrl = viewName.substring(FORWARD_URL_PREFIX.length());
+			return new InternalResourceView(forwardUrl);
+		}
+		// Else fall back to superclass implementation: calling loadView.
+		return super.createView(viewName, locale);
+	}
+```
+
+提供了对  redirect::XX  和 forward:xx 前缀的支持处理。
+
+然后调用父类进行创建
+
+```java
+protected View createView(String viewName, Locale locale) throws Exception {
+		return loadView(viewName, locale);
+	}
+...
+protected View loadView(String viewName, Locale locale) throws Exception {
+		AbstractUrlBasedView view = buildView(viewName);
+		View result = applyLifecycleMethods(viewName, view);
+		return (view.checkResource(locale) ? result : null);
+	}
+...
+    protected AbstractUrlBasedView buildView(String viewName) throws Exception {
+		Class<?> viewClass = getViewClass();
+		Assert.state(viewClass != null, "No view class");
+
+		AbstractUrlBasedView view = (AbstractUrlBasedView) BeanUtils.instantiateClass(viewClass);
+		view.setUrl(getPrefix() + viewName + getSuffix());
+
+		String contentType = getContentType();
+		if (contentType != null) {
+			view.setContentType(contentType);
+		}
+
+		view.setRequestContextAttribute(getRequestContextAttribute());
+		view.setAttributesMap(getAttributesMap());
+
+		Boolean exposePathVariables = getExposePathVariables();
+		if (exposePathVariables != null) {
+			view.setExposePathVariables(exposePathVariables);
+		}
+		Boolean exposeContextBeansAsAttributes = getExposeContextBeansAsAttributes();
+		if (exposeContextBeansAsAttributes != null) {
+			view.setExposeContextBeansAsAttributes(exposeContextBeansAsAttributes);
+		}
+		String[] exposedContextBeanNames = getExposedContextBeanNames();
+		if (exposedContextBeanNames != null) {
+			view.setExposedContextBeanNames(exposedContextBeanNames);
+		}
+
+		return view;
+	}
+
+```
+
+回到上面，当创建完视图后，会调用`render`进行处理
+
+```java
+	public void render(@Nullable Map<String, ?> model, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+
+		if (logger.isTraceEnabled()) {
+			logger.trace("Rendering view with name '" + this.beanName + "' with model " + model +
+				" and static attributes " + this.staticAttributes);
+		}
+
+		Map<String, Object> mergedModel = createMergedOutputModel(model, request, response);
+		prepareResponse(request, response);
+		renderMergedOutputModel(mergedModel, getRequestToExpose(request), response);
+	}
+```
+
+首先会调用`createMergedOutputModel`方法，这里主要是将一些属性值直接放入到model中。
+
+```java
+protected Map<String, Object> createMergedOutputModel(@Nullable Map<String, ?> model,
+			HttpServletRequest request, HttpServletResponse response) {
+
+		@SuppressWarnings("unchecked")
+		Map<String, Object> pathVars = (this.exposePathVariables ?
+				(Map<String, Object>) request.getAttribute(View.PATH_VARIABLES) : null);
+
+		// Consolidate static and dynamic model attributes.
+		int size = this.staticAttributes.size();
+		size += (model != null ? model.size() : 0);
+		size += (pathVars != null ? pathVars.size() : 0);
+
+		Map<String, Object> mergedModel = new LinkedHashMap<>(size);
+		mergedModel.putAll(this.staticAttributes);
+		if (pathVars != null) {
+			mergedModel.putAll(pathVars);
+		}
+		if (model != null) {
+			mergedModel.putAll(model);
+		}
+
+		// Expose RequestContext?
+		if (this.requestContextAttribute != null) {
+			mergedModel.put(this.requestContextAttribute, createRequestContext(request, response, mergedModel));
+		}
+
+		return mergedModel;
+	}
+```
+
+然后调用`renderMergedOutputModel`方法
 
 
 
