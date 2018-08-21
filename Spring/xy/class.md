@@ -179,11 +179,21 @@ bean元数据元素
 
 ## ModelFactory
 
-用来维护model，包括初始化及将model中相应参数值更新到sessionAttributes中。
+用来维护model，包括初始化及将model中相应参数值更新到`sessionAttributes`中。
 
+## ImportSelector
 
+这个接口在IOC初始化时，会自动调用其中的`selectImports`方法，将返回值String[] 装配到IOC容器中。
 
+所以实现这个接口，可以将想要的bean完成初始化装配工作。通过`AbstratcApplicationContext`中的refresh中的`invokeBeanFactoryPostProcessors`为入口。
 
+实现在`org.springframework.context.annotation.ConfigurationClassParser#processImports`方法中。
+
+## ImportBeanDefinitionRegistrar
+
+这个接口在IOC初始化时，会自动调用其中的`registerBeanDefinitions`方法。
+
+通过`AbstractApplicationContext`中的refresh中的`invokeBeanFactoryPostProcessors`为入口。会将所有实现`ImportBeanDefinitionRegistrar`的类放入到集合中。然后继续调用`invokeBeanDefinitionRegistryPostProcessors`方法逐步会调用`registerBeanDefinitions`方法。
 
 
 
@@ -315,6 +325,8 @@ bean元数据元素
 ## @ComponentScans
 
 `@ComponentScan` 的集合配置。 多注解方式的实现。
+
+
 
 
 
