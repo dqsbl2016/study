@@ -104,133 +104,9 @@ public class Operator {
 
 在研究原理之前，首先需要先了解一下自定义标签，因为XML中的AOP相关标签都属于自定义标签类型，所以Spring在处理时都是采用自定义标签处理的方式。首先先从处理入手，具体在IOC容器初始化环节，有一步xml文件内元素的解析处理。
 
-回顾下`DefaultBeanDefinitionDocumentReader`中`parseBeanDefinitions`方法处理。
+**这里参考 自定义标签内容。**
 
-```java
-protected void parseBeanDefinitions(Element root, BeanDefinitionParserDelegate delegate) {
-		if (delegate.isDefaultNamespace(root)) {
-			NodeList nl = root.getChildNodes();
-			for (int i = 0; i < nl.getLength(); i++) {
-				Node node = nl.item(i);
-				if (node instanceof Element) {
-					Element ele = (Element) node;
-					if (delegate.isDefaultNamespace(ele)) {
-						parseDefaultElement(ele, delegate);
-					}
-					else {
-						delegate.parseCustomElement(ele);
-					}
-				}
-			}
-		}
-		else {
-			delegate.parseCustomElement(root);
-		}
-	}
-```
-
-其中对于所有自定义标签的解析都是通过调用`BeanDefinitionParserDelegate`中的`parseCustomElement`方法。
-
-```java
-public BeanDefinition parseCustomElement(Element ele) {
-		return parseCustomElement(ele, null);
-	}
-...
-public BeanDefinition parseCustomElement(Element ele, @Nullable BeanDefinition containingBd) {
-		String namespaceUri = getNamespaceURI(ele);
-		if (namespaceUri == null) {
-			return null;
-		}
-		NamespaceHandler handler = this.readerContext.getNamespaceHandlerResolver().resolve(namespaceUri);
-		if (handler == null) {
-			error("Unable to locate Spring NamespaceHandler for XML schema namespace [" + namespaceUri + "]", ele);
-			return null;
-		}
-		return handler.parse(ele, new ParserContext(this.readerContext, this, containingBd));
-	}  
-```
-
-在这里进行分析，首先`String namespaceUri = getNamespaceURI(ele);`这个获取的就是XML文件中的命名空间类似`http://www.springframework.org/schema/aop `，然后通过`NamespaceHandler handler = this.readerContext.getNamespaceHandlerResolver().resolve(namespaceUri);`获取到用户自定义的命名空间解析器。看到这里我们可以看一下AOP自定义的解析器`AopNamespaceHandler`。
-
-```java
-public class AopNamespaceHandler extends NamespaceHandlerSupport {
-	@Override
-	public void init() {
-		// In 2.0 XSD as well as in 2.1 XSD.
-		registerBeanDefinitionParser("config", new ConfigBeanDefinitionParser());
-		registerBeanDefinitionParser("aspectj-autoproxy", new AspectJAutoProxyBeanDefinitionParser());
-		registerBeanDefinitionDecorator("scoped-proxy", new ScopedProxyBeanDefinitionDecorator());
-		// Only in 2.0 XSD: moved to context namespace as of 2.1
-		registerBeanDefinitionParser("spring-configured", new SpringConfiguredBeanDefinitionParser());
-	}
-}
-```
-
-在上面获取用户自定义的命名空间解析器`AopNamespaceHandler`时，就已经调用了`init`方法。
-
-```java
-public NamespaceHandler resolve(String namespaceUri) {
-		...
-				NamespaceHandler namespaceHandler = (NamespaceHandler) BeanUtils.instantiateClass(handlerClass);
-				namespaceHandler.init();
-				handlerMappings.put(namespaceUri, namespaceHandler);
-				return namespaceHandler;
-			}
-		...
-	}
-```
-
-而`registerBeanDefinitionParser`将配置的几种解析器加入到解析器集合中。
-
-```java
-private final Map<String, BeanDefinitionParser> parsers = new HashMap<>();
-...
-protected final void registerBeanDefinitionParser(String elementName, BeanDefinitionParser parser) {
-		this.parsers.put(elementName, parser);
-	}
-```
-
-选定好了解析器后，将进入解析工作，我们继续回到`BeanDefinitionParserDelegate`中的`parseCustomElement`中。
-
-```java
-public BeanDefinition parseCustomElement(Element ele, @Nullable BeanDefinition containingBd) {
-		String namespaceUri = getNamespaceURI(ele);
-		if (namespaceUri == null) {
-			return null;
-		}
-		NamespaceHandler handler = this.readerContext.getNamespaceHandlerResolver().resolve(namespaceUri);
-		if (handler == null) {
-			error("Unable to locate Spring NamespaceHandler for XML schema namespace [" + namespaceUri + "]", ele);
-			return null;
-		}
-		return handler.parse(ele, new ParserContext(this.readerContext, this, containingBd));
-	}  
-```
-
-这里的`handler`就是`AopNamespaceHandler`，调用`parse`方法，但是`AopNamespaceHandler`中没有这个方法，所以我们从它的父类中寻找。
-
-```java
-public BeanDefinition parse(Element element, ParserContext parserContext) {
-		BeanDefinitionParser parser = findParserForElement(element, parserContext);
-		return (parser != null ? parser.parse(element, parserContext) : null);
-	}
-```
-
-通过`Element elemrnt`获取对应具体解析器。
-
-```java
-private BeanDefinitionParser findParserForElement(Element element, ParserContext parserContext) {
-		String localName = parserContext.getDelegate().getLocalName(element);
-		BeanDefinitionParser parser = this.parsers.get(localName);
-		if (parser == null) {
-			parserContext.getReaderContext().fatal(
-					"Cannot locate BeanDefinitionParser for element [" + localName + "]", element);
-		}
-		return parser;
-	}
-```
-
-然后再调用具体解析器中的`parser.parse(element, parserContext)`来执行。根据`AopNamespaceHandler`的配置分为这四种。
+根据`AopNamespaceHandler`的配置分为这四种解析器。
 
 - `config`-->`ConfigBeanDefinitionParser`
 - `aspectj-autoproxy`-->`AspectJAutoProxyBeanDefinitionParser`
@@ -1332,8 +1208,34 @@ protected Object resolveBeforeInstantiation(String beanName, RootBeanDefinition 
 具体的实现方法在父类`AbstractAutoProxyCreator`中。具体实现
 
 ```java
-public Object postProcessBeforeInitialization(Object bean, String beanName) {
-		return bean;
+public Object postProcessBeforeInstantiation(Class<?> beanClass, String beanName) throws BeansException {
+		Object cacheKey = getCacheKey(beanClass, beanName);
+
+		if (!StringUtils.hasLength(beanName) || !this.targetSourcedBeans.contains(beanName)) {
+			if (this.advisedBeans.containsKey(cacheKey)) {
+				return null;
+			}
+			if (isInfrastructureClass(beanClass) || shouldSkip(beanClass, beanName)) {
+				this.advisedBeans.put(cacheKey, Boolean.FALSE);
+				return null;
+			}
+		}
+
+		// Create proxy here if we have a custom TargetSource.
+		// Suppresses unnecessary default instantiation of the target bean:
+		// The TargetSource will handle target instances in a custom fashion.
+		TargetSource targetSource = getCustomTargetSource(beanClass, beanName);
+		if (targetSource != null) {
+			if (StringUtils.hasLength(beanName)) {
+				this.targetSourcedBeans.add(beanName);
+			}
+			Object[] specificInterceptors = getAdvicesAndAdvisorsForBean(beanClass, beanName, targetSource);
+			Object proxy = createProxy(beanClass, beanName, specificInterceptors, targetSource);
+			this.proxyTypes.put(cacheKey, proxy.getClass());
+			return proxy;
+		}
+
+		return null;
 	}
 public Object postProcessAfterInitialization(@Nullable Object bean, String beanName) throws BeansException {
 		if (bean != null) {
@@ -1345,6 +1247,84 @@ public Object postProcessAfterInitialization(@Nullable Object bean, String beanN
 		return bean;
 	}
 ```
+
+首先会调用`postProcessBeforeInstantiation`实例化之前操作，首先验证如果beanName有效，或者未被处理过。 然后判断是否需要代理，此时是`(this.advisedBeans.containsKey(cacheKey)`应该为false，后面的判断也不会执行，这个时候如果是xml的方式，则会获取到
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 可以看到在``postProcessBeforeInitiazation``中并无处理，而在`postProcessAfterInitialization`中进行了一些操作。通过`wrapIfNecessary`看一下具体处理。
 
@@ -1376,7 +1356,7 @@ protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey) 
 	}
 ```
 
-首先是一些判断，比如是否已经处理货是否跳过，而真正的处理从`getAdvicesAndAdvisorsForBean`方法开始。
+首先是一些判断，比如是否已经处理或是否跳过，而真正的处理从`getAdvicesAndAdvisorsForBean`方法开始。
 
 会通过模板方法，调用子类`getAdvicesAndAdvisorsForBean`中的`getAdvicesAndAdvisorsForBean`实现。
 
@@ -1420,7 +1400,7 @@ protected List<Advisor> findCandidateAdvisors() {
 	}
 ```
 
-首先会调用父类方法，加载XML配置文件中的AOP声明，然后通过调用`this.aspectJAdvisorsBuilder.buildAspectJAdvisors()`增加注解种的增强内容。
+首先会调用父类方法，加载XML配置文件中的AOP声明，然后通过调用`this.aspectJAdvisorsBuilder.buildAspectJAdvisors()`增加注解中的增强内容。
 
 ```java
 public List<Advisor> buildAspectJAdvisors() {

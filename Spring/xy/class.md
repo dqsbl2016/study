@@ -116,10 +116,156 @@ bean元数据元素
 
 * `GenericApplicationContext`
 
+
+
+## BeanWrapper
+
+对bean实例的包装。
+
+* `BeanWrapperImpl`
+
+  它包装了一个bean对象，缓存了bean的内省结果 ,并可以访问bean的属性、设置bean的属性值 。
+
   
 
 
 
+## BeanPostProcessor
+
+提供对象初始化前置 后置处理器
+
+`postProcessBeforeInitialization`
+
+``postProcessAfterInitialization``
+
+## InstantiationAwareBeanPostProcessor
+
+继承于`BeanPostProcessor`,  提供对象实例化前置 后置处理器,所以这个接口会存在5个方法。
+
+`postProcessBeforeInstantiation`
+
+`postProcessAfterInstantiation`
+
+`postProcessPropertyValues`修改属性
+
+过程：
+
+* `postProcessBeforeInstantiation`方法是最先执行的方法，它在目标对象实例化之前调用，该方法的返回值类型是Object，我们可以返回任何类型的值。由于这个时候目标对象还未实例化，所以这个返回值可以用来代替原本该生成的目标对象的实例(比如代理对象)。如果该方法的返回值代替原本该生成的目标对象，后续只有`postProcessAfterInitialization`方法会调用，其它方法不再调用；否则按照正常的流程走
+* `postProcessAfterInstantiation`方法在目标对象实例化之后调用，这个时候对象已经被实例化，但是该实例的属性还未被设置，都是null。因为它的返回值是决定要不要调用`postProcessPropertyValues`方法的其中一个因素（因为还有一个因素是`mbd.getDependencyCheck()`）；如果该方法返回false,并且不需要check，那么`postProcessPropertyValues`就会被忽略不执行；如果返回true，`postProcessPropertyValues`就会被执行。
+* `postProcessPropertyValues`方法对属性值进行修改(这个时候属性值还未被设置，但是我们可以修改原本该设置进去的属性值)。如果`postProcessAfterInstantiation`方法返回false，该方法可能不会被调用。可以在该方法内对属性值进行修改
+* 父接口`BeanPostProcessor`的2个方法`postProcessBeforeInitialization`和`postProcessAfterInitialization`都是在目标对象被实例化之后，并且属性也被设置之后调用的。
+
+## HandlerMethod  
+
+封装方法的定义相关的信息，如类、方法、参数等。
+
+* `InvocableHandlerMethod`  添加参数准备，数据绑定工厂，方法调用
+
+  执行使用@ModelAttribute注解会使用 
+
+  * `ServletInvocableHandlerMethod`  添加返回值处理职责，ResponseStatus处理
+
+    执行http相关方法会使用,比如调用处理执行 ，这个里面继承了上面的所有处理方法。
+
+    
+
+## WebDataBinderFactory
+
+创建WebDataBinder的工厂。
+
+* `DefaultDataBinderFactory`   默认实现，主要是创建实现
+  * `InitBinderDataBinderFactory`  增加初始化实现
+    * `ServletRequestDataBinderFactory`
+
+## ModelFactory
+
+用来维护model，包括初始化及将model中相应参数值更新到`sessionAttributes`中。
+
+## ImportSelector
+
+这个接口在IOC初始化时，会自动调用其中的`selectImports`方法，将返回值String[] 装配到IOC容器中。
+
+所以实现这个接口，可以将想要的bean完成初始化装配工作。通过`AbstratcApplicationContext`中的refresh中的`invokeBeanFactoryPostProcessors`为入口。
+
+实现在`org.springframework.context.annotation.ConfigurationClassParser#processImports`方法中。
+
+## ImportBeanDefinitionRegistrar
+
+这个接口在IOC初始化时，会自动调用其中的`registerBeanDefinitions`方法。
+
+通过`AbstractApplicationContext`中的refresh中的`invokeBeanFactoryPostProcessors`为入口。会将所有实现`ImportBeanDefinitionRegistrar`的类放入到集合中。然后继续调用`invokeBeanDefinitionRegistryPostProcessors`方法逐步会调用`registerBeanDefinitions`方法。
+
+
+
+# 属性
+
+## DefaultSingletonBeanRegistry
+
+* `singletonObjects`   
+
+  单例Bean的缓存集合。
+
+* `earlySingletonObjects`
+
+  早期的单例Bean的缓存集合。是将单例Bean注册到`singletonObjects`  集合之前的放置位置。
+
+  （保存beanName和创建Bean实例之间的关系，当一个单例bean被放到这里后，那么当bean还在创建过程中，就可以通过getbean方法获取到了，目的用来检测循环引用）
+
+* `singletonFactories`
+
+  单例`ObjectFactory`对象的缓存集合，（用来保存BeanName和创建Bean的工厂之间的关系）
+
+* `registeredSingleons`
+
+  用来保存已经注册的所有单例bean
+
+## DefaultListAbleBeanFactory
+
+* `beanDefinitionMap`
+
+  IOC容器，spring中的`definition`集合。
+
+
+
+## SimpleAliasRegistry
+
+* `aliasMap` 
+
+  别名与beanName的集合，其中Value值（BeanName）也许还会是一个别名。
+
+  
+
+## FactoryBeanRegistrySupport
+
+* `factoryBeanObjectCache`
+
+  由`factorybean`创建的单件对象的缓存 
+
+
+
+## AbstractBeanFactory
+
+* `megredBeanDefinition` 
+
+  合并`RootBeanDefinition`类型的beans集合
+
+* `prototypesCurrentlyInCreation`
+
+  当前正在创建的Bean集合
+
+
+
+## AbstractAutowireCapableBeanFactory
+
+* `factoryBeanInstanceCache`
+
+  未完成的FactoryBean实例的集合
+
+
+
+ ## AbstractNestablePropertyAccessor
+
+* `wrappedObject`  存放实例化的bean
 
 
 
@@ -127,21 +273,60 @@ bean元数据元素
 
 
 
+# Annotation
+
+## @ComponentScan
+
+默认会扫描与配置类相同的包，会扫描这个包以及这个包下的所有子包，查找带有@Component注解的类。
+
+此外Spring支持将 `@Named` java 注入规范 ，作为@Component注解的替代方案。两者之间有一些细微的差异，但是大多数场景中，他们是可以互相替换的。
+
+* 直接使用，会扫描与配置类相同的包
+
+  ```java
+  package org.util
+  
+  @ComponentScan
+  public class demo(){
+  }
+  
+  ```
+
+* 设置指定扫描的包
+
+  ```java
+  package org.util
+  
+      @ComponentScan("org.com")
+      public class demo(){
+      }
+  ```
+
+  * 也可以扫描多个包
+
+    ```java
+    package org.util
+    
+        @ComponentScan(basePackages={"org.com","org.cpo"})
+        public class demo(){
+        }
+    ```
+
+  但是String类型不安全
+
+  ```java
+  package org.util
+  
+      @ComponentScan(basePackageClasses={"com.class","cpo.class"})
+      public class demo(){
+      }
+  ```
+
+## @ComponentScans
+
+`@ComponentScan` 的集合配置。 多注解方式的实现。
 
 
 
-AbstractApplicationContext
 
-`ApplicationContext`接口的抽象实现，没有强制规定配置的存储类型，仅仅实现通用的上下文。主要用到模板方法设计模式，具体实现由子类进行。自动通过`registerBeanPostProcessors()`方法注册`BeanFactoryPostProcessor`, `BeanPostProcessor`和`ApplicationListener`的实例用来探测bean factory里的特殊bean 。
 
-BeanDefinitionRegistry
-
-用于持有像`RootBeanDefinition`和 `ChildBeanDefinition`实例的`bean definitions`的注册表接口。`DefaultListableBeanFactory`实现了这个接口，因此可以通过相应的方法向`beanFactory`里面注册bean。`GenericApplicationContext`内置一个`DefaultListableBeanFactory`实例，它对这个接口的实现实际上是通过调用这个实例的相应方法实现的。 
-
-GenericApplicationContext
-
-通用应用上下文，内部持有一个`DefaultListableBeanFactory`实例，这个类实现了`BeanDefinitionRegistry`接口，可以在它身上使用任意的bean definition读取器。典型的使用案例是：通过`BeanFactoryRegistry`接口注册bean definitions，然后调用`refresh()`方法来初始化那些带有应用上下文语义（`org.springframework.context.ApplicationContextAware`）的bean，自动探测`org.springframework.beans.factory.config.BeanFactoryPostProcessor`等。 
-
-AnnotationConfigRegistry
-
-注解配置注册表。用于注解配置应用上下文的通用接口，拥有一个注册配置类和扫描配置类的方法。 
