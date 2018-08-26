@@ -73,9 +73,7 @@ tomcat启动
 > 		long startTime = System.currentTimeMillis();
 > 
 > 		try {
-> 			// Store context in local instance variable, to guarantee that
-> 			// it is available on ServletContext shutdown.
->              //创建应用上下文
+> 		             //创建应用上下文
 > 			if (this.context == null) {
 > 				this.context = createWebApplicationContext(servletContext);
 > 			}
@@ -90,10 +88,11 @@ tomcat启动
 > 						ApplicationContext parent = loadParentContext(servletContext);
 > 						cwac.setParent(parent);
 > 					}
+>                     //配置刷新web应用上下文【重点】
 > 					configureAndRefreshWebApplicationContext(cwac, servletContext);
 > 				}
 > 			}
-> 			servletContext.setAttribute(WebApplicationContext.ROOT_WEB_APPLICATION_CONTEXT_ATTRIBUTE, this.context);
+> //设置应用根标示，			servletContext.setAttribute(WebApplicationContext.ROOT_WEB_APPLICATION_CONTEXT_ATTRIBUTE, this.context);
 > 
 > 			ClassLoader ccl = Thread.currentThread().getContextClassLoader();
 > 			if (ccl == ContextLoader.class.getClassLoader()) {
@@ -101,15 +100,6 @@ tomcat启动
 > 			}
 > 			else if (ccl != null) {
 > 				currentContextPerThread.put(ccl, this.context);
-> 			}
-> 
-> 			if (logger.isDebugEnabled()) {
-> 				logger.debug("Published root WebApplicationContext as ServletContext attribute with name [" +
-> 						WebApplicationContext.ROOT_WEB_APPLICATION_CONTEXT_ATTRIBUTE + "]");
-> 			}
-> 			if (logger.isInfoEnabled()) {
-> 				long elapsedTime = System.currentTimeMillis() - startTime;
-> 				logger.info("Root WebApplicationContext: initialization completed in " + elapsedTime + " ms");
 > 			}
 > 
 > 			return this.context;
