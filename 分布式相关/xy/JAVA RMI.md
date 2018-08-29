@@ -923,6 +923,12 @@ public Remote lookup(String var1) throws AccessException, NotBoundException, Rem
 
 然后调用具体调用方法，这个时候代理类接收到服务请求后，会与服务端建立通信。
 
+总结：
+
+先通过naming.lookup  获取到了  具体实现类的stub代理。
+
+然后调用具体方法，代理类中会执行invoke方法，将参数、方法名、类名等信息封装，通过scoket通信发送到服务端，等待服务端处理结果。
+
 ### 服务端接收客户端请求后的响应处理
 
 客户端调用服务方法后，实际上调用的是代理对象的对应方法，而stub里面只有和网络相关的处理逻辑，并没有对应的业务处理逻辑 。比如说server上有一个add方法，stub中同样也有一个add方法，但是stub上的这个add方法并不包含添加的逻辑实现，他仅仅包含如何连接到远程的skeleton、调用方法的详细信息、参数、返回值等等。 
