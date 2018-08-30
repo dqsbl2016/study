@@ -844,5 +844,212 @@ public <T> Exporter<T> export(Invoker<T> invoker) throws RpcException {
     }
 ```
 
+这里会将要发布的服务封装一个`DubboExporter`对象，然后放入exporterMap变量中。如果设置了事假或callback等会做对应参数赋值。然后调用主要的方法openServer准备发布服务
 
+```java
+private void openServer(URL url) {
+        String key = url.getAddress();
+        boolean isServer = url.getParameter("isserver", true);
+        if (isServer) {
+            ExchangeServer server = (ExchangeServer)this.serverMap.get(key);
+            if (server == null) {
+                this.serverMap.put(key, this.createServer(url));
+            } else {
+                server.reset(url);
+            }
+        }
+
+    }
+```
+
+dubbo大部分操作都是基于URL驱动的，所以这里获取url中的地址。
+
+然后依然先从变量serverMap中是否有这个地址的服务列表，如果没有则调用createServer创建服务，否则会调用server.reset(url);进行重新启动。
+
+首先看createServer方法
+
+```java
+private ExchangeServer createServer(URL url) {
+        url = url.addParameterIfAbsent("channel.readonly.sent", Boolean.TRUE.toString());
+        url = url.addParameterIfAbsent("heartbeat", String.valueOf(60000));
+        String str = url.getParameter("server", "netty");
+        if (str != null && str.length() > 0 && !ExtensionLoader.getExtensionLoader(Transporter.class).hasExtension(str)) {
+            throw new RpcException("Unsupported server type: " + str + ", url: " + url);
+        } else {
+            url = url.addParameter("codec", Version.isCompatibleVersion() ? "dubbo1compatible" : "dubbo");
+
+            ExchangeServer server;
+            try {
+                server = Exchangers.bind(url, this.requestHandler);
+            } catch (RemotingException var5) {
+                throw new RpcException("Fail to start server(url: " + url + ") " + var5.getMessage(), var5);
+            }
+
+            str = url.getParameter("client");
+            if (str != null && str.length() > 0) {
+                Set<String> supportedTypes = ExtensionLoader.getExtensionLoader(Transporter.class).getSupportedExtensions();
+                if (!supportedTypes.contains(str)) {
+                    throw new RpcException("Unsupported client type: " + str);
+                }
+            }
+
+            return server;
+        }
+    }
+```
+
+方法中还是先根据URL信息进行一些处理，然后调用Exchangers.bind(url, this.requestHandler);绑定服务
+
+```java
+  public static ExchangeServer bind(URL url, ExchangeHandler handler) throws RemotingException {
+        if (url == null) {
+            throw new IllegalArgumentException("url == null");
+        } else if (handler == null) {
+            throw new IllegalArgumentException("handler == null");
+        } else {
+            url = url.addParameterIfAbsent("codec", "exchange");
+            return getExchanger(url).bind(url, handler);
+        }
+    }
+。。。
+public ExchangeServer bind(URL url, ExchangeHandler handler) throws RemotingException {
+        return new HeaderExchangeServer(Transporters.bind(url, new ChannelHandler[]{new DecodeHandler(new HeaderExchangeHandler(handler))}));
+    }
+```
+
+可以看到这里返回一个HeaderExchangeServer对象，所以上面reset中调用的也是HeaderExchangeServer这个中的方法。
+
+实例HeaderExchangeServer对象时，参数中会调用Transporters.bind操作。
+
+```java
+public static Server bind(URL url, ChannelHandler... handlers) throws RemotingException {
+        if (url == null) {
+            throw new IllegalArgumentException("url == null");
+        } else if (handlers != null && handlers.length != 0) {
+            Object handler;
+            if (handlers.length == 1) {
+                handler = handlers[0];
+            } else {
+                handler = new ChannelHandlerDispatcher(handlers);
+            }
+
+            return getTransporter().bind(url, (ChannelHandler)handler);
+        } else {
+            throw new IllegalArgumentException("handlers == null");
+        }
+    }
+```
+
+这其中会调用getTransporter().bind方法进行服务发布。这里getTransporter()返回的是什么呢?
+
+```java
+public static Transporter getTransporter() {
+        return (Transporter)ExtensionLoader.getExtensionLoader(Transporter.class).getAdaptiveExtension();
+    }
+```
+
+一样使用了SPI机制，默认使用netty的对应实现netty=com.alibaba.dubbo.remoting.transport.netty.NettyTransporter
+
+```java
+@SPI("netty")public interface Transporter {}
+```
+
+所以这里会进入NettyTransporter内的实现。
+
+```java
+public Server bind(URL url, ChannelHandler listener) throws RemotingException {
+        return new NettyServer(url, listener);
+    }
+```
+
+最后进入到了netty框架中的处理。
+
+
+
+继续回到上面方法看看reset的处理
+
+```java
+public void reset(URL url) {
+        this.server.reset(url);
+
+        try {
+            if (url.hasParameter("heartbeat") || url.hasParameter("heartbeat.timeout")) {
+                int h = url.getParameter("heartbeat", this.heartbeat);
+                int t = url.getParameter("heartbeat.timeout", h * 3);
+                if (t < h * 2) {
+                    throw new IllegalStateException("heartbeatTimeout < heartbeatInterval * 2");
+                }
+
+                if (h != this.heartbeat || t != this.heartbeatTimeout) {
+                    this.heartbeat = h;
+                    this.heartbeatTimeout = t;
+                    this.startHeatbeatTimer();
+                }
+            }
+        } catch (Throwable var4) {
+            this.logger.error(var4.getMessage(), var4);
+        }
+
+    }
+```
+
+这里的server就是创建的nettyserver,但是方法中未写reset方法，所以会调父类中。
+
+```java
+ public void reset(URL url) {
+        if (url != null) {
+            int t;
+            try {
+                if (url.hasParameter("accepts")) {
+                    t = url.getParameter("accepts", 0);
+                    if (t > 0) {
+                        this.accepts = t;
+                    }
+                }
+            } catch (Throwable var7) {
+                logger.error(var7.getMessage(), var7);
+            }
+
+            try {
+                if (url.hasParameter("idle.timeout")) {
+                    t = url.getParameter("idle.timeout", 0);
+                    if (t > 0) {
+                        this.idleTimeout = t;
+                    }
+                }
+            } catch (Throwable var6) {
+                logger.error(var6.getMessage(), var6);
+            }
+
+            try {
+                if (url.hasParameter("threads") && this.executor instanceof ThreadPoolExecutor && !this.executor.isShutdown()) {
+                    ThreadPoolExecutor threadPoolExecutor = (ThreadPoolExecutor)this.executor;
+                    int threads = url.getParameter("threads", 0);
+                    int max = threadPoolExecutor.getMaximumPoolSize();
+                    int core = threadPoolExecutor.getCorePoolSize();
+                    if (threads > 0 && (threads != max || threads != core)) {
+                        if (threads < core) {
+                            threadPoolExecutor.setCorePoolSize(threads);
+                            if (core == max) {
+                                threadPoolExecutor.setMaximumPoolSize(threads);
+                            }
+                        } else {
+                            threadPoolExecutor.setMaximumPoolSize(threads);
+                            if (core == max) {
+                                threadPoolExecutor.setCorePoolSize(threads);
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable var8) {
+                logger.error(var8.getMessage(), var8);
+            }
+
+            super.setUrl(this.getUrl().addParameters(url.getParameters()));
+        }
+    }
+
+```
+
+这里只是做了 线程池的数量做了调整。
 
