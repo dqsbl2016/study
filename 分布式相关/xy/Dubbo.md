@@ -804,15 +804,146 @@ exporters.add(exporter);
 
 创建代理对象，及发布服务。
 
-首先了解创建代理内容
+首先了解创建代理内容，一样通过SPI机制先进入到StubProxyFactoryWrapper中。
 
 ```java
-
+public <T> Invoker<T> getInvoker(T proxy, Class<T> type, URL url) throws RpcException {
+        return this.proxyFactory.getInvoker(proxy, type, url);
+    }
 ```
 
+后进入
 
+```java'
+public <T> Invoker<T> getInvoker(T proxy, Class<T> type, URL url) {
+        final Wrapper wrapper = Wrapper.getWrapper(proxy.getClass().getName().indexOf(36) < 0 ? proxy.getClass() : type);
+        return new AbstractProxyInvoker<T>(proxy, type, url) {
+            protected Object doInvoke(T proxy, String methodName, Class<?>[] parameterTypes, Object[] arguments) throws Throwable {
+                return wrapper.invokeMethod(proxy, methodName, parameterTypes, arguments);
+            }
+        };
+    }
+```
 
-继续上面分析，会进入到export服务发布方法，这里根据SPI机制会进入到wapper-----》dubboProtocol
+这里通过调用getWrapper方法创建一份代理类
+
+```java
+ public static Wrapper getWrapper(Class<?> c) {
+        while(ClassGenerator.isDynamicClass(c)) {
+            c = c.getSuperclass();
+        }
+
+        if (c == Object.class) {
+            return OBJECT_WRAPPER;
+        } else {
+            Wrapper ret = (Wrapper)WRAPPER_MAP.get(c);
+            if (ret == null) {
+                ret = makeWrapper(c);
+                WRAPPER_MAP.put(c, ret);
+            }
+
+            return ret;
+        }
+    }
+```
+
+然后返回一个AbstractProxyInvoker对象，其中复写了doInvoke方法调用。使用动态代理的invokeMethod方法。
+
+继续上面分析，会进入到export服务发布方法，这里根据SPI机制会进入到wapper-----》RegistryProtocol
+
+```java
+ public <T> Exporter<T> export(Invoker<T> originInvoker) throws RpcException {
+        final RegistryProtocol.ExporterChangeableWrapper<T> exporter = this.doLocalExport(originInvoker);
+        final Registry registry = this.getRegistry(originInvoker);
+        final URL registedProviderUrl = this.getRegistedProviderUrl(originInvoker);
+        registry.register(registedProviderUrl);
+        final URL overrideSubscribeUrl = this.getSubscribedOverrideUrl(registedProviderUrl);
+        final RegistryProtocol.OverrideListener overrideSubscribeListener = new RegistryProtocol.OverrideListener(overrideSubscribeUrl, originInvoker);
+        this.overrideListeners.put(overrideSubscribeUrl, overrideSubscribeListener);
+        registry.subscribe(overrideSubscribeUrl, overrideSubscribeListener);
+        return new Exporter<T>() {
+            public Invoker<T> getInvoker() {
+                return exporter.getInvoker();
+            }
+
+            public void unexport() {
+                try {
+                    exporter.unexport();
+                } catch (Throwable var4) {
+                    RegistryProtocol.logger.warn(var4.getMessage(), var4);
+                }
+
+                try {
+                    registry.unregister(registedProviderUrl);
+                } catch (Throwable var3) {
+                    RegistryProtocol.logger.warn(var3.getMessage(), var3);
+                }
+
+                try {
+                    RegistryProtocol.this.overrideListeners.remove(overrideSubscribeUrl);
+                    registry.unsubscribe(overrideSubscribeUrl, overrideSubscribeListener);
+                } catch (Throwable var2) {
+                    RegistryProtocol.logger.warn(var2.getMessage(), var2);
+                }
+
+            }
+        };
+    }
+```
+
+首先执行的是doLocalExport发布本地服务，
+
+```java
+private <T> RegistryProtocol.ExporterChangeableWrapper<T> doLocalExport(Invoker<T> originInvoker) {
+        String key = this.getCacheKey(originInvoker);
+        RegistryProtocol.ExporterChangeableWrapper<T> exporter = (RegistryProtocol.ExporterChangeableWrapper)this.bounds.get(key);
+        if (exporter == null) {
+            Map var4 = this.bounds;
+            synchronized(this.bounds) {
+                exporter = (RegistryProtocol.ExporterChangeableWrapper)this.bounds.get(key);
+                if (exporter == null) {
+                    Invoker<?> invokerDelegete = new RegistryProtocol.InvokerDelegete(originInvoker, this.getProviderUrl(originInvoker));
+                    exporter = new RegistryProtocol.ExporterChangeableWrapper(this.protocol.export(invokerDelegete), originInvoker);
+                    this.bounds.put(key, exporter);
+                }
+            }
+        }
+
+        return exporter;
+    }
+```
+
+首先会进入getCacheKey方法，
+
+```java
+ private String getCacheKey(Invoker<?> originInvoker) {
+        URL providerUrl = this.getProviderUrl(originInvoker);
+        String key = providerUrl.removeParameters(new String[]{"dynamic", "enabled"}).toFullString();
+        return key;
+    }
+```
+
+然后调用getProviderUrl方法
+
+```java
+private URL getProviderUrl(Invoker<?> origininvoker) {
+        String export = origininvoker.getUrl().getParameterAndDecoded("export");
+        if (export != null && export.length() != 0) {
+            URL providerUrl = URL.valueOf(export);
+            return providerUrl;
+        } else {
+            throw new IllegalArgumentException("The registry export url is null! registry: " + origininvoker.getUrl());
+        }
+    }
+```
+
+获取url中的属性export内容，这个里面的就是dubbo：//。。。。
+
+回到上面就会将URl的内容变更为dubbo。
+
+然后将服务封装为`RegistryProtocol.InvokerDelegete`类型，然后通过this.protocol.export(invokerDelegete)发布服务，而发布后的服务会再封装一层RegistryProtocol.ExporterChangeableWrapper，然后放入缓存集合中。
+
+这里的protocol 使用的就是dubbo的发布逻辑了。
 
 ```java
 public <T> Exporter<T> export(Invoker<T> invoker) throws RpcException {
@@ -1052,4 +1183,744 @@ public void reset(URL url) {
 ```
 
 这里只是做了 线程池的数量做了调整。
+
+这样本地服务就发布成功，但是需要向注册中心进行注册。通过this.getRegistry(originInvoker);获取到注册中心。
+
+```java
+private Registry getRegistry(Invoker<?> originInvoker) {
+        URL registryUrl = originInvoker.getUrl();
+        if ("registry".equals(registryUrl.getProtocol())) {
+            String protocol = registryUrl.getParameter("registry", "dubbo");
+            registryUrl = registryUrl.setProtocol(protocol).removeParameter("registry");
+        }
+
+        return this.registryFactory.getRegistry(registryUrl);
+    }
+```
+
+首先获取注册中心配置的内容，如果是registry，获取url中的registry属性配置，这里就获取到了注册中心Zookeeper或redis。然后调用this.registryFactory.getRegistry(registryUrl); 这里zookeeper会调用父类中的这个方法。
+
+```java
+public Registry getRegistry(URL url) {
+        url = url.setPath(RegistryService.class.getName()).addParameter("interface", RegistryService.class.getName()).removeParameters(new String[]{"export", "refer"});
+        String key = url.toServiceString();
+        LOCK.lock();
+
+        Registry var4;
+        try {
+            Registry registry = (Registry)REGISTRIES.get(key);
+            if (registry == null) {
+                registry = this.createRegistry(url);
+                if (registry == null) {
+                    throw new IllegalStateException("Can not create registry " + url);
+                }
+
+                REGISTRIES.put(key, registry);
+                var4 = registry;
+                return var4;
+            }
+
+            var4 = registry;
+        } finally {
+            LOCK.unlock();
+        }
+
+        return var4;
+    }
+```
+
+首先判断缓存中是否有注册中心配置，没有则创建通过 this.createRegistry(url)
+
+```java
+public Registry createRegistry(URL url) {
+        return new ZookeeperRegistry(url, this.zookeeperTransporter);
+    }
+```
+
+创建zookeeper连接。
+
+回到上面得到注册中心后，通过
+
+```java
+ final URL registedProviderUrl = this.getRegistedProviderUrl(originInvoker);
+```
+
+将URL进行封装后调用registry.register(registedProviderUrl);进行服务注册, 会先调用父类FailbackRegistry中实现。
+
+```java
+public void register(URL url) {
+        if (!this.destroyed.get()) {
+            super.register(url);
+            this.failedRegistered.remove(url);
+            this.failedUnregistered.remove(url);
+
+            try {
+                this.doRegister(url);
+            } catch (Exception var6) {
+                Throwable t = var6;
+                boolean check = this.getUrl().getParameter("check", true) && url.getParameter("check", true) && !"consumer".equals(url.getProtocol());
+                boolean skipFailback = var6 instanceof SkipFailbackWrapperException;
+                if (check || skipFailback) {
+                    if (skipFailback) {
+                        t = var6.getCause();
+                    }
+
+                    throw new IllegalStateException("Failed to register " + url + " to registry " + this.getUrl().getAddress() + ", cause: " + ((Throwable)t).getMessage(), (Throwable)t);
+                }
+
+                this.logger.error("Failed to register " + url + ", waiting for retry, cause: " + var6.getMessage(), var6);
+                this.failedRegistered.add(url);
+            }
+
+        }
+    }
+```
+
+先做一些资源处理，然后调用doRegister进行注册
+
+```java
+   protected void doRegister(URL url) {
+        try {
+            this.zkClient.create(this.toUrlPath(url), url.getParameter("dynamic", true));
+        } catch (Throwable var3) {
+            throw new RpcException("Failed to register " + url + " to zookeeper " + this.getUrl() + ", cause: " + var3.getMessage(), var3);
+        }
+    }
+```
+
+创建节点。 然后回到上面方法，注册监听，返回一个new Exporter<T> 对象，并对一些方法进行复写。
+
+```java
+ public Invoker<T> getInvoker() {
+                return exporter.getInvoker();
+            }
+
+            public void unexport() {
+                try {
+                    exporter.unexport();
+                } catch (Throwable var4) {
+                    RegistryProtocol.logger.warn(var4.getMessage(), var4);
+                }
+
+                try {
+                    registry.unregister(registedProviderUrl);
+                } catch (Throwable var3) {
+                    RegistryProtocol.logger.warn(var3.getMessage(), var3);
+                }
+
+                try {
+                    RegistryProtocol.this.overrideListeners.remove(overrideSubscribeUrl);
+                    registry.unsubscribe(overrideSubscribeUrl, overrideSubscribeListener);
+                } catch (Throwable var2) {
+                    RegistryProtocol.logger.warn(var2.getMessage(), var2);
+                }
+
+            }
+```
+
+至此发布服务完成。
+
+
+
+## 消费调用（启动）
+
+同样通过自定义标签实现入口为ReferenceBean，同样调用afterPropertiesSet方法
+
+通过调用this.getObject();进入。
+
+```java
+    public Object getObject() throws Exception {
+        return this.get();
+    }
+...
+     public synchronized T get() {
+        if (this.destroyed) {
+            throw new IllegalStateException("Already destroyed!");
+        } else {
+            if (this.ref == null) {
+                this.init();
+            }
+
+            return this.ref;
+        }
+    }
+
+```
+
+调用init方法
+
+```java
+private void init() {
+        if (!this.initialized) {
+            this.initialized = true;
+            if (this.interfaceName != null && this.interfaceName.length() != 0) {
+                this.checkDefault();
+                appendProperties(this);
+                if (this.getGeneric() == null && this.getConsumer() != null) {
+                    this.setGeneric(this.getConsumer().getGeneric());
+                }
+
+                if (ProtocolUtils.isGeneric(this.getGeneric())) {
+                    this.interfaceClass = GenericService.class;
+                } else {
+                    try {
+                        this.interfaceClass = Class.forName(this.interfaceName, true, Thread.currentThread().getContextClassLoader());
+                    } catch (ClassNotFoundException var18) {
+                        throw new IllegalStateException(var18.getMessage(), var18);
+                    }
+
+                    this.checkInterfaceAndMethods(this.interfaceClass, this.methods);
+                }
+
+                String resolve = System.getProperty(this.interfaceName);
+                String resolveFile = null;
+                if (resolve == null || resolve.length() == 0) {
+                    resolveFile = System.getProperty("dubbo.resolve.file");
+                    if (resolveFile == null || resolveFile.length() == 0) {
+                        File userResolveFile = new File(new File(System.getProperty("user.home")), "dubbo-resolve.properties");
+                        if (userResolveFile.exists()) {
+                            resolveFile = userResolveFile.getAbsolutePath();
+                        }
+                    }
+
+                    if (resolveFile != null && resolveFile.length() > 0) {
+                        Properties properties = new Properties();
+                        FileInputStream fis = null;
+
+                        try {
+                            fis = new FileInputStream(new File(resolveFile));
+                            properties.load(fis);
+                        } catch (IOException var16) {
+                            throw new IllegalStateException("Unload " + resolveFile + ", cause: " + var16.getMessage(), var16);
+                        } finally {
+                            try {
+                                if (null != fis) {
+                                    fis.close();
+                                }
+                            } catch (IOException var15) {
+                                logger.warn(var15.getMessage(), var15);
+                            }
+
+                        }
+
+                        resolve = properties.getProperty(this.interfaceName);
+                    }
+                }
+
+                if (resolve != null && resolve.length() > 0) {
+                    this.url = resolve;
+                    if (logger.isWarnEnabled()) {
+                        if (resolveFile != null && resolveFile.length() > 0) {
+                            logger.warn("Using default dubbo resolve file " + resolveFile + " replace " + this.interfaceName + "" + resolve + " to p2p invoke remote service.");
+                        } else {
+                            logger.warn("Using -D" + this.interfaceName + "=" + resolve + " to p2p invoke remote service.");
+                        }
+                    }
+                }
+
+                if (this.consumer != null) {
+                    if (this.application == null) {
+                        this.application = this.consumer.getApplication();
+                    }
+
+                    if (this.module == null) {
+                        this.module = this.consumer.getModule();
+                    }
+
+                    if (this.registries == null) {
+                        this.registries = this.consumer.getRegistries();
+                    }
+
+                    if (this.monitor == null) {
+                        this.monitor = this.consumer.getMonitor();
+                    }
+                }
+
+                if (this.module != null) {
+                    if (this.registries == null) {
+                        this.registries = this.module.getRegistries();
+                    }
+
+                    if (this.monitor == null) {
+                        this.monitor = this.module.getMonitor();
+                    }
+                }
+
+                if (this.application != null) {
+                    if (this.registries == null) {
+                        this.registries = this.application.getRegistries();
+                    }
+
+                    if (this.monitor == null) {
+                        this.monitor = this.application.getMonitor();
+                    }
+                }
+
+                this.checkApplication();
+                this.checkStubAndMock(this.interfaceClass);
+                Map<String, String> map = new HashMap();
+                Map<Object, Object> attributes = new HashMap();
+                map.put("side", "consumer");
+                map.put("dubbo", Version.getVersion());
+                map.put("timestamp", String.valueOf(System.currentTimeMillis()));
+                if (ConfigUtils.getPid() > 0) {
+                    map.put("pid", String.valueOf(ConfigUtils.getPid()));
+                }
+
+                String prifix;
+                if (!this.isGeneric()) {
+                    prifix = Version.getVersion(this.interfaceClass, this.version);
+                    if (prifix != null && prifix.length() > 0) {
+                        map.put("revision", prifix);
+                    }
+
+                    String[] methods = Wrapper.getWrapper(this.interfaceClass).getMethodNames();
+                    if (methods.length == 0) {
+                        logger.warn("NO method found in service interface " + this.interfaceClass.getName());
+                        map.put("methods", "*");
+                    } else {
+                        map.put("methods", StringUtils.join(new HashSet(Arrays.asList(methods)), ","));
+                    }
+                }
+
+                map.put("interface", this.interfaceName);
+                appendParameters(map, this.application);
+                appendParameters(map, this.module);
+                appendParameters(map, this.consumer, "default");
+                appendParameters(map, this);
+                prifix = StringUtils.getServiceKey(map);
+                if (this.methods != null && this.methods.size() > 0) {
+                    Iterator i$ = this.methods.iterator();
+
+                    while(i$.hasNext()) {
+                        MethodConfig method = (MethodConfig)i$.next();
+                        appendParameters(map, method, method.getName());
+                        String retryKey = method.getName() + ".retry";
+                        if (map.containsKey(retryKey)) {
+                            String retryValue = (String)map.remove(retryKey);
+                            if ("false".equals(retryValue)) {
+                                map.put(method.getName() + ".retries", "0");
+                            }
+                        }
+
+                        appendAttributes(attributes, method, prifix + "." + method.getName());
+                        checkAndConvertImplicitConfig(method, map, attributes);
+                    }
+                }
+
+                StaticContext.getSystemContext().putAll(attributes);
+                this.ref = this.createProxy(map);
+            } else {
+                throw new IllegalStateException("<dubbo:reference interface=\"\" /> interface not allow null!");
+            }
+        }
+    }
+
+```
+
+通过调用this.createProxy(map);
+
+```java
+ private T createProxy(Map<String, String> map) {
+        URL tmpUrl = new URL("temp", "localhost", 0, map);
+        boolean isJvmRefer;
+        if (this.isInjvm() == null) {
+            if (this.url != null && this.url.length() > 0) {
+                isJvmRefer = false;
+            } else if (InjvmProtocol.getInjvmProtocol().isInjvmRefer(tmpUrl)) {
+                isJvmRefer = true;
+            } else {
+                isJvmRefer = false;
+            }
+        } else {
+            isJvmRefer = this.isInjvm();
+        }
+
+        if (isJvmRefer) {
+            URL url = (new URL("injvm", "127.0.0.1", 0, this.interfaceClass.getName())).addParameters(map);
+            this.invoker = refprotocol.refer(this.interfaceClass, url);
+            if (logger.isInfoEnabled()) {
+                logger.info("Using injvm service " + this.interfaceClass.getName());
+            }
+        } else {
+            URL u;
+            URL url;
+            if (this.url != null && this.url.length() > 0) {
+                String[] us = Constants.SEMICOLON_SPLIT_PATTERN.split(this.url);
+                if (us != null && us.length > 0) {
+                    String[] arr$ = us;
+                    int len$ = us.length;
+
+                    for(int i$ = 0; i$ < len$; ++i$) {
+                        String u = arr$[i$];
+                        URL url = URL.valueOf(u);
+                        if (url.getPath() == null || url.getPath().length() == 0) {
+                            url = url.setPath(this.interfaceName);
+                        }
+
+                        if ("registry".equals(url.getProtocol())) {
+                            this.urls.add(url.addParameterAndEncoded("refer", StringUtils.toQueryString(map)));
+                        } else {
+                            this.urls.add(ClusterUtils.mergeUrl(url, map));
+                        }
+                    }
+                }
+            } else {
+                List<URL> us = this.loadRegistries(false);
+                if (us != null && us.size() > 0) {
+                    for(Iterator i$ = us.iterator(); i$.hasNext(); this.urls.add(u.addParameterAndEncoded("refer", StringUtils.toQueryString(map)))) {
+                        u = (URL)i$.next();
+                        url = this.loadMonitor(u);
+                        if (url != null) {
+                            map.put("monitor", URL.encode(url.toFullString()));
+                        }
+                    }
+                }
+
+                if (this.urls == null || this.urls.size() == 0) {
+                    throw new IllegalStateException("No such any registry to reference " + this.interfaceName + " on the consumer " + NetUtils.getLocalHost() + " use dubbo version " + Version.getVersion() + ", please config <dubbo:registry address=\"...\" /> to your spring config.");
+                }
+            }
+
+            if (this.urls.size() == 1) {
+                this.invoker = refprotocol.refer(this.interfaceClass, (URL)this.urls.get(0));
+            } else {
+                List<Invoker<?>> invokers = new ArrayList();
+                URL registryURL = null;
+                Iterator i$ = this.urls.iterator();
+
+                while(i$.hasNext()) {
+                    url = (URL)i$.next();
+                    invokers.add(refprotocol.refer(this.interfaceClass, url));
+                    if ("registry".equals(url.getProtocol())) {
+                        registryURL = url;
+                    }
+                }
+
+                if (registryURL != null) {
+                    u = registryURL.addParameter("cluster", "available");
+                    this.invoker = cluster.join(new StaticDirectory(u, invokers));
+                } else {
+                    this.invoker = cluster.join(new StaticDirectory(invokers));
+                }
+            }
+        }
+
+        Boolean c = this.check;
+        if (c == null && this.consumer != null) {
+            c = this.consumer.isCheck();
+        }
+
+        if (c == null) {
+            c = true;
+        }
+
+        if (c && !this.invoker.isAvailable()) {
+            throw new IllegalStateException("Failed to check the status of the service " + this.interfaceName + ". No provider available for the service " + (this.group == null ? "" : this.group + "/") + this.interfaceName + (this.version == null ? "" : ":" + this.version) + " from the url " + this.invoker.getUrl() + " to the consumer " + NetUtils.getLocalHost() + " use dubbo version " + Version.getVersion());
+        } else {
+            if (logger.isInfoEnabled()) {
+                logger.info("Refer dubbo service " + this.interfaceClass.getName() + " from url " + this.invoker.getUrl());
+            }
+
+            return proxyFactory.getProxy(this.invoker);
+        }
+    }
+```
+
+首先判断是否同一个JVM，如果是，通过this.invoker = refprotocol.refer(this.interfaceClass, url);获取服务。
+
+这里会调用InjvmProtocol中，通过点对点连接。
+
+```java
+   public <T> Invoker<T> refer(Class<T> serviceType, URL url) throws RpcException {
+        return new InjvmInvoker(serviceType, url, url.getServiceKey(), this.exporterMap);
+    }
+```
+
+否则获取配置的注册中心内容，如果配置地址只有一个直接调用this.invoker = refprotocol.refer(this.interfaceClass, (URL)this.urls.get(0)); 获取服务。
+
+否则如果存在注册中心，则进入this.invoker = cluster.join(new StaticDirectory(u, invokers));否则this.invoker = cluster.join(new StaticDirectory(invokers));
+
+这个区别为调用cluster不同，一个是AvailableCluster，一个是FailoverCluster。
+
+进入配置注册中心的AvailableCluster
+
+```java
+public <T> Invoker<T> join(Directory<T> directory) throws RpcException {
+        return new AbstractClusterInvoker<T>(directory) {
+            public Result doInvoke(Invocation invocation, List<Invoker<T>> invokers, LoadBalance loadbalance) throws RpcException {
+                Iterator i$ = invokers.iterator();
+
+                Invoker invoker;
+                do {
+                    if (!i$.hasNext()) {
+                        throw new RpcException("No provider available in " + invokers);
+                    }
+
+                    invoker = (Invoker)i$.next();
+                } while(!invoker.isAvailable());
+
+                return invoker.invoke(invocation);
+            }
+        };
+    }
+```
+
+这里主要返回了一个AbstractClusterInvoker对象，里面覆写了doInvoke方法。
+
+我们再回到如果配置地址只有一个直接调用服务。这里会调用RegistryProtocol中的内容，
+
+```java
+public <T> Invoker<T> refer(Class<T> type, URL url) throws RpcException {
+        url = url.setProtocol(url.getParameter("registry", "dubbo")).removeParameter("registry");
+        Registry registry = this.registryFactory.getRegistry(url);
+        if (RegistryService.class.equals(type)) {
+            return this.proxyFactory.getInvoker(registry, type, url);
+        } else {
+            Map<String, String> qs = StringUtils.parseQueryString(url.getParameterAndDecoded("refer"));
+            String group = (String)qs.get("group");
+            return group == null || group.length() <= 0 || Constants.COMMA_SPLIT_PATTERN.split(group).length <= 1 && !"*".equals(group) ? this.doRefer(this.cluster, registry, type, url) : this.doRefer(this.getMergeableCluster(), registry, type, url);
+        }
+    }
+```
+
+首先拼接客户调用url，然后通过 this.registryFactory.getRegistry(url);获取到注册中心
+
+然后调用this.doRefer进行获取服务
+
+```java
+private <T> Invoker<T> doRefer(Cluster cluster, Registry registry, Class<T> type, URL url) {
+        RegistryDirectory<T> directory = new RegistryDirectory(type, url);
+        directory.setRegistry(registry);
+        directory.setProtocol(this.protocol);
+        URL subscribeUrl = new URL("consumer", NetUtils.getLocalHost(), 0, type.getName(), directory.getUrl().getParameters());
+        if (!"*".equals(url.getServiceInterface()) && url.getParameter("register", true)) {
+            registry.register(subscribeUrl.addParameters(new String[]{"category", "consumers", "check", String.valueOf(false)}));
+        }
+
+        directory.subscribe(subscribeUrl.addParameter("category", "providers,configurators,routers"));
+        return cluster.join(directory);
+    }
+```
+
+这里会注册register客户端地址。
+
+然后调用directory.subscribe方法
+
+```java
+ public void subscribe(URL url) {
+        this.setConsumerUrl(url);
+        this.registry.subscribe(url, this);
+    }
+```
+
+其中的registry为FailbackRegistry中
+
+```java
+ public void subscribe(URL url, NotifyListener listener) {
+        if (!this.destroyed.get()) {
+            super.subscribe(url, listener);
+            this.removeFailedSubscribed(url, listener);
+
+            try {
+                this.doSubscribe(url, listener);
+            } catch (Exception var8) {
+                Throwable t = var8;
+                List<URL> urls = this.getCacheUrls(url);
+                if (urls != null && urls.size() > 0) {
+                    this.notify(url, listener, urls);
+                    this.logger.error("Failed to subscribe " + url + ", Using cached list: " + urls + " from cache file: " + this.getUrl().getParameter("file", System.getProperty("user.home") + "/dubbo-registry-" + url.getHost() + ".cache") + ", cause: " + var8.getMessage(), var8);
+                } else {
+                    boolean check = this.getUrl().getParameter("check", true) && url.getParameter("check", true);
+                    boolean skipFailback = var8 instanceof SkipFailbackWrapperException;
+                    if (check || skipFailback) {
+                        if (skipFailback) {
+                            t = var8.getCause();
+                        }
+
+                        throw new IllegalStateException("Failed to subscribe " + url + ", cause: " + ((Throwable)t).getMessage(), (Throwable)t);
+                    }
+
+                    this.logger.error("Failed to subscribe " + url + ", waiting for retry, cause: " + var8.getMessage(), var8);
+                }
+
+                this.addFailedSubscribed(url, listener);
+            }
+
+        }
+    }
+```
+
+这里面主要调用doSubscribe方法,会调用ZookeeperRegistry中。
+
+```java
+protected void doSubscribe(final URL url, final NotifyListener listener) {
+        try {
+            if ("*".equals(url.getServiceInterface())) {
+                String root = this.toRootPath();
+                ConcurrentMap<NotifyListener, ChildListener> listeners = (ConcurrentMap)this.zkListeners.get(url);
+                if (listeners == null) {
+                    this.zkListeners.putIfAbsent(url, new ConcurrentHashMap());
+                    listeners = (ConcurrentMap)this.zkListeners.get(url);
+                }
+
+                ChildListener zkListener = (ChildListener)listeners.get(listener);
+                if (zkListener == null) {
+                    listeners.putIfAbsent(listener, new ChildListener() {
+                        public void childChanged(String parentPath, List<String> currentChilds) {
+                            Iterator i$ = currentChilds.iterator();
+
+                            while(i$.hasNext()) {
+                                String child = (String)i$.next();
+                                child = URL.decode(child);
+                                if (!ZookeeperRegistry.this.anyServices.contains(child)) {
+                                    ZookeeperRegistry.this.anyServices.add(child);
+                                    ZookeeperRegistry.this.subscribe(url.setPath(child).addParameters(new String[]{"interface", child, "check", String.valueOf(false)}), listener);
+                                }
+                            }
+
+                        }
+                    });
+                    zkListener = (ChildListener)listeners.get(listener);
+                }
+
+                this.zkClient.create(root, false);
+                List<String> services = this.zkClient.addChildListener(root, zkListener);
+                if (services != null && services.size() > 0) {
+                    Iterator i$ = services.iterator();
+
+                    while(i$.hasNext()) {
+                        String service = (String)i$.next();
+                        service = URL.decode(service);
+                        this.anyServices.add(service);
+                        this.subscribe(url.setPath(service).addParameters(new String[]{"interface", service, "check", String.valueOf(false)}), listener);
+                    }
+                }
+            } else {
+                List<URL> urls = new ArrayList();
+                String[] arr$ = this.toCategoriesPath(url);
+                int len$ = arr$.length;
+
+                for(int i$ = 0; i$ < len$; ++i$) {
+                    String path = arr$[i$];
+                    ConcurrentMap<NotifyListener, ChildListener> listeners = (ConcurrentMap)this.zkListeners.get(url);
+                    if (listeners == null) {
+                        this.zkListeners.putIfAbsent(url, new ConcurrentHashMap());
+                        listeners = (ConcurrentMap)this.zkListeners.get(url);
+                    }
+
+                    ChildListener zkListener = (ChildListener)listeners.get(listener);
+                    if (zkListener == null) {
+                        listeners.putIfAbsent(listener, new ChildListener() {
+                            public void childChanged(String parentPath, List<String> currentChilds) {
+                                ZookeeperRegistry.this.notify(url, listener, ZookeeperRegistry.this.toUrlsWithEmpty(url, parentPath, currentChilds));
+                            }
+                        });
+                        zkListener = (ChildListener)listeners.get(listener);
+                    }
+
+                    this.zkClient.create(path, false);
+                    List<String> children = this.zkClient.addChildListener(path, zkListener);
+                    if (children != null) {
+                        urls.addAll(this.toUrlsWithEmpty(url, path, children));
+                    }
+                }
+
+                this.notify(url, listener, urls);
+            }
+
+        } catch (Throwable var11) {
+            throw new RpcException("Failed to subscribe " + url + " to zookeeper " + this.getUrl() + ", cause: " + var11.getMessage(), var11);
+        }
+    }
+```
+
+这里主要是对`providers,configurators,routers`三个文件进行监听。然后调用this.notify(url, listener, urls);方法
+
+```java
+protected void notify(URL url, NotifyListener listener, List<URL> urls) {
+        if (url == null) {
+            throw new IllegalArgumentException("notify url == null");
+        } else if (listener == null) {
+            throw new IllegalArgumentException("notify listener == null");
+        } else {
+            try {
+                this.doNotify(url, listener, urls);
+            } catch (Exception var6) {
+                Map<NotifyListener, List<URL>> listeners = (Map)this.failedNotified.get(url);
+                if (listeners == null) {
+                    this.failedNotified.putIfAbsent(url, new ConcurrentHashMap());
+                    listeners = (Map)this.failedNotified.get(url);
+                }
+
+                listeners.put(listener, urls);
+                this.logger.error("Failed to notify for subscribe " + url + ", waiting for retry, cause: " + var6.getMessage(), var6);
+            }
+
+        }
+    }
+```
+
+之后调用doNotify方法
+
+```java
+   protected void doNotify(URL url, NotifyListener listener, List<URL> urls) {
+        super.notify(url, listener, urls);
+    }
+...
+protected void notify(URL url, NotifyListener listener, List<URL> urls) {
+        if (url == null) {
+            throw new IllegalArgumentException("notify url == null");
+        } else if (listener == null) {
+            throw new IllegalArgumentException("notify listener == null");
+        } else if ((urls == null || urls.size() == 0) && !"*".equals(url.getServiceInterface())) {
+            this.logger.warn("Ignore empty notify urls for subscribe url " + url);
+        } else {
+            if (this.logger.isInfoEnabled()) {
+                this.logger.info("Notify urls for subscribe url " + url + ", urls: " + urls);
+            }
+
+            Map<String, List<URL>> result = new HashMap();
+            Iterator i$ = urls.iterator();
+
+            while(i$.hasNext()) {
+                URL u = (URL)i$.next();
+                if (UrlUtils.isMatch(url, u)) {
+                    String category = u.getParameter("category", "providers");
+                    List<URL> categoryList = (List)result.get(category);
+                    if (categoryList == null) {
+                        categoryList = new ArrayList();
+                        result.put(category, categoryList);
+                    }
+
+                    ((List)categoryList).add(u);
+                }
+            }
+
+            if (result.size() != 0) {
+                Map<String, List<URL>> categoryNotified = (Map)this.notified.get(url);
+                if (categoryNotified == null) {
+                    this.notified.putIfAbsent(url, new ConcurrentHashMap());
+                    categoryNotified = (Map)this.notified.get(url);
+                }
+
+                Iterator i$ = result.entrySet().iterator();
+
+                while(i$.hasNext()) {
+                    Entry<String, List<URL>> entry = (Entry)i$.next();
+                    String category = (String)entry.getKey();
+                    List<URL> categoryList = (List)entry.getValue();
+                    categoryNotified.put(category, categoryList);
+                    this.saveProperties(url);
+                    listener.notify(categoryList);
+                }
+
+            }
+        }
+    }    
+```
+
+这里主要做的是一些本地缓存的更新操作。
+
+然后回到最上面会调用proxyFactory.getProxy(this.invoker);，创建一个动态代理类
 
