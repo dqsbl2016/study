@@ -1922,5 +1922,185 @@ protected void notify(URL url, NotifyListener listener, List<URL> urls) {
 
 这里主要做的是一些本地缓存的更新操作。
 
-然后回到最上面会调用proxyFactory.getProxy(this.invoker);，创建一个动态代理类
+然后回到最上面会调用proxyFactory.getProxy(this.invoker);，创建一个动态代理类,这里会进入StubProxyFactoryWrapper类
+
+```java
+public <T> T getProxy(Invoker<T> invoker) throws RpcException {
+        T proxy = this.proxyFactory.getProxy(invoker);
+        if (GenericService.class != invoker.getInterface()) {
+            String stub = invoker.getUrl().getParameter("stub", invoker.getUrl().getParameter("local"));
+            if (ConfigUtils.isNotEmpty(stub)) {
+                Class<?> serviceType = invoker.getInterface();
+                if (ConfigUtils.isDefault(stub)) {
+                    if (invoker.getUrl().hasParameter("stub")) {
+                        stub = serviceType.getName() + "Stub";
+                    } else {
+                        stub = serviceType.getName() + "Local";
+                    }
+                }
+
+                try {
+                    Class<?> stubClass = ReflectUtils.forName(stub);
+                    if (!serviceType.isAssignableFrom(stubClass)) {
+                        throw new IllegalStateException("The stub implemention class " + stubClass.getName() + " not implement interface " + serviceType.getName());
+                    }
+
+                    try {
+                        Constructor<?> constructor = ReflectUtils.findConstructor(stubClass, serviceType);
+                        proxy = constructor.newInstance(proxy);
+                        URL url = invoker.getUrl();
+                        if (url.getParameter("dubbo.stub.event", false)) {
+                            url = url.addParameter("dubbo.stub.event.methods", StringUtils.join(Wrapper.getWrapper(proxy.getClass()).getDeclaredMethodNames(), ","));
+                            url = url.addParameter("isserver", Boolean.FALSE.toString());
+
+                            try {
+                                this.export(proxy, invoker.getInterface(), url);
+                            } catch (Exception var9) {
+                                LOGGER.error("export a stub service error.", var9);
+                            }
+                        }
+                    } catch (NoSuchMethodException var10) {
+                        throw new IllegalStateException("No such constructor \"public " + stubClass.getSimpleName() + "(" + serviceType.getName() + ")\" in stub implemention class " + stubClass.getName(), var10);
+                    }
+                } catch (Throwable var11) {
+                    LOGGER.error("Failed to create stub implemention class " + stub + " in consumer " + NetUtils.getLocalHost() + " use dubbo version " + Version.getVersion() + ", cause: " + var11.getMessage(), var11);
+                }
+            }
+        }
+
+        return proxy;
+    }
+```
+
+首先会调用T proxy = this.proxyFactory.getProxy(invoker);
+
+```java
+public <T> T getProxy(Invoker<T> invoker) throws RpcException {
+        Class<?>[] interfaces = null;
+        String config = invoker.getUrl().getParameter("interfaces");
+        if (config != null && config.length() > 0) {
+            String[] types = Constants.COMMA_SPLIT_PATTERN.split(config);
+            if (types != null && types.length > 0) {
+                interfaces = new Class[types.length + 2];
+                interfaces[0] = invoker.getInterface();
+                interfaces[1] = EchoService.class;
+
+                for(int i = 0; i < types.length; ++i) {
+                    interfaces[i + 1] = ReflectUtils.forName(types[i]);
+                }
+            }
+        }
+
+        if (interfaces == null) {
+            interfaces = new Class[]{invoker.getInterface(), EchoService.class};
+        }
+
+        return this.getProxy(invoker, interfaces);
+    }
+。。。
+ public <T> T getProxy(Invoker<T> invoker, Class<?>[] interfaces) {
+        return Proxy.getProxy(interfaces).newInstance(new InvokerInvocationHandler(invoker));
+    }
+   
+```
+
+判断如果服务url存在接口属性信息，则将接口信息放入集合中，其中默认会将实现接口与EchoService.class放入集合中，然后调用jdk动态代理获取代理。
+
+然后做一些属性赋值，并进行实例化操作，同时判断dubbo.stub.event属性值，如果设置为true调用this.export(proxy, invoker.getInterface(), url);进行发布。
+
+```java
+private <T> Exporter<T> export(T instance, Class<T> type, URL url) {
+        return this.protocol.export(this.proxyFactory.getInvoker(instance, type, url));
+    }
+```
+
+## 服务调用
+
+通过代理类proxy0进入，会进入InvokerInvocationHandler中的invoke。
+
+```java
+ public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        String methodName = method.getName();
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        if (method.getDeclaringClass() == Object.class) {
+            return method.invoke(invoker, args);
+        }
+        if ("toString".equals(methodName) && parameterTypes.length == 0) {
+            return invoker.toString();
+        }
+        if ("hashCode".equals(methodName) && parameterTypes.length == 0) {
+            return invoker.hashCode();
+        }
+        if ("equals".equals(methodName) && parameterTypes.length == 1) {
+            return invoker.equals(args[0]);
+        }
+        return invoker.invoke(new RpcInvocation(method, args)).recreate();
+    }
+```
+
+这里的invoker是MockClusterInvoker,之前join时new的这个类型对象
+
+```jav
+public Result invoke(Invocation invocation) throws RpcException {
+		Result result = null;
+        
+        String value = directory.getUrl().getMethodParameter(invocation.getMethodName(), Constants.MOCK_KEY, Boolean.FALSE.toString()).trim(); 
+        if (value.length() == 0 || value.equalsIgnoreCase("false")){
+        	//no mock
+        	result = this.invoker.invoke(invocation);
+        } else if (value.startsWith("force")) {
+        	if (logger.isWarnEnabled()) {
+        		logger.info("force-mock: " + invocation.getMethodName() + " force-mock enabled , url : " +  directory.getUrl());
+        	}
+        	//force:direct mock
+        	result = doMockInvoke(invocation, null);
+        } else {
+        	//fail-mock
+        	try {
+        		result = this.invoker.invoke(invocation);
+        	}catch (RpcException e) {
+				if (e.isBiz()) {
+					throw e;
+				} else {
+					if (logger.isWarnEnabled()) {
+		        		logger.info("fail-mock: " + invocation.getMethodName() + " fail-mock enabled , url : " +  directory.getUrl(), e);
+		        	}
+					result = doMockInvoke(invocation, e);
+				}
+			}
+        }
+        return result;
+	}
+```
+
+如果mock为false，则直接调用this.invoker.invoke(invocation);
+
+否则会执行result = doMockInvoke(invocation, null);
+
+```java
+private Result doMockInvoke(Invocation invocation,RpcException e){
+		Result result = null;
+    	Invoker<T> minvoker ;
+    	
+    	List<Invoker<T>> mockInvokers = selectMockInvoker(invocation);
+		if (mockInvokers == null || mockInvokers.size() == 0){
+			minvoker = (Invoker<T>) new MockInvoker(directory.getUrl());
+		} else {
+			minvoker = mockInvokers.get(0);
+		}
+		try {
+			result = minvoker.invoke(invocation);
+		} catch (RpcException me) {
+			if (me.isBiz()) {
+				result = new RpcResult(me.getCause());
+			} else {
+				throw new RpcException(me.getCode(), getMockExceptionMessage(e, me), me.getCause());
+			}
+//			
+		} catch (Throwable me) {
+			throw new RpcException(getMockExceptionMessage(e, me), me.getCause());
+		}
+		return result;
+    }
+```
 
