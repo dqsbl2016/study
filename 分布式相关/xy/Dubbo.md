@@ -1518,6 +1518,24 @@ private void init() {
 
 ```
 
+ 检查点对点直连配置
+
+配置点对点直连的方式有三种，分别如下：
+
+1、在<dubbo:reference>中配置url指向提供者，将绕过注册中心，多个地址用分号隔开；
+
+2、在JVM启动参数中加入-D参数映射服务地址，key为服务名，value为服务提供者url；
+
+例如：java -Dcom.alibaba.xxx.XxxService=dubbo://localhost:20890
+
+3、如果服务比较多，也可以用文件映射，用-Ddubbo.resolve.file指定映射文件路径，例如：java -Ddubbo.resolve.file=xxx.properties
+
+然后在映射文件xxx.properties中加入：(key为服务名，value为服务提供者url)，
+
+例如：com.alibaba.xxx.XxxService=dubbo://localhost:20890
+
+​       在[ReferenceConfig](https://blog.csdn.net/meilong_whpu/article/details/72165552).init()方法中，首先通过第2种方式获取服务地址，若没有配置再通过第3种方式获取服务地址，在第3种方式中优先获取${user.home}/dubbo-resolve.properties文件，若没有在使用-Ddubbo.resolve.file指定的映射文件，最后在前两种方法均没有获取到服务地址的情况下，取第1种方式中配置的服务地址。
+
 通过调用this.createProxy(map);
 
 ```java
@@ -2013,6 +2031,16 @@ private <T> Exporter<T> export(T instance, Class<T> type, URL url) {
         return this.protocol.export(this.proxyFactory.getInvoker(instance, type, url));
     }
 ```
+
+### 总结
+
+* 先获取配置信息，进行加载
+* 如果是点对点服务则调用dubbo的refer，如果配置多个url，调用cluster.join(new StaticDirectory(invokers));
+* 如果配置注册中心的则调用registry的refer，如果配置多个url，调用cluster.join(new StaticDirectory(u, invokers));
+* 然后通过逐层封装，最后封装MockClusterInvoker
+* 然后调用动态代理，生成个代理类
+
+
 
 ## 服务调用
 
