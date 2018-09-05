@@ -2790,8 +2790,9 @@ protected Object initializeBean(final String beanName, final Object bean, @Nulla
 * 判断是否实现了 `Aware`相关接口
   * 如果实现了`BeanNameAware `接口，会调用`setBeanName `方法；
   * 如果实现了`BeanFactoryAware `接口，会调用`setBeanFactory `方法；
-  * 如果实现了`ApplicationContextAware `接口，会调用`setApplicationContext`方法；
 * 判断是否实现`BeanPostProcessor `接口，执行`postProcessBeforeInitialization `前置方法；
+  * `ApplicationContextAwareProcessor`
+    * 如果实现了`ApplicationContextAware `接口，会调用`setApplicationContext`方法；
 * 判断是否实现`InitializingBean `接口，执行`afterPropertiesSet `方法；
 * 判断是否配置了`init-method`方法，配置了则执行；
 * 判断是否实现`BeanPostProcessor `接口，执行`postProcessAfterInitialization `前置方法；
