@@ -12,6 +12,7 @@ Docker 中文手册上解释说：Docker 是一个开源的引擎，可以轻松
 OpenStack 集群和其他的基础应用平台。
 从这里我们可以看出，Docker 并非是容器，而是管理容器的引擎。Docker
 为应用打包、部署的平台，而非单纯的虚拟化技术。
+
 ![1536132225854](https://github.com/dqsbl2016/study/blob/master/docker/img/1536132225854.png)
 
 
