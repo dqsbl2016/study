@@ -11,13 +11,13 @@ Docker 中文手册上解释说：Docker 是一个开源的引擎，可以轻松
 测试通过的容器可以批量地在生产环境中部署，包括 VMs（虚拟机）、bare metal、
 OpenStack 集群和其他的基础应用平台。
 从这里我们可以看出，Docker 并非是容器，而是管理容器的引擎。Docker
-为应用打包、部署的平台，而非单纯的虚拟化技术。![1536132225854](C:\Users\admin\AppData\Local\Temp\1536132225854.png)
+为应用打包、部署的平台，而非单纯的虚拟化技术。![1536132225854](https://github.com/dqsbl2016/study/blob/master/docker/img/1536132225854.png)
 
 
 
 ## Docker 与虚拟化争锋
 
-![1536133340013](C:\Users\admin\AppData\Local\Temp\1536133340013.png)  
+![1536133340013](https://github.com/dqsbl2016/study/blob/master/docker/img/1536133340013.png)  
 
 谈到虚拟化，很多人又发问了。Docker 和虚拟化有什么区别？Docker（或者说是容器）的出现是否会取代传统的虚拟化技术。
 说起虚拟化，大家首先想到的必然是 VM 一类的虚机。这类虚拟机完美的
@@ -29,7 +29,7 @@ OpenStack 集群和其他的基础应用平台。
 还有一个最大的问题是价格问题，据 StackEngine 调查分析，有 43.8%的
 企业使用 Docker 的原因是 VMvire 太贵
 
-![1536133617338](C:\Users\admin\AppData\Local\Temp\1536133617338.png) 
+![1536133617338](https://github.com/dqsbl2016/study/blob/master/docker/img/1536133617338.png) 
 
 但是，传统的虚拟技术还不会被取代。Docker 或者说容器技术和虚拟机并
 非简单的取舍关系。
