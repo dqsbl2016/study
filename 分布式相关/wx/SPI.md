@@ -352,6 +352,71 @@ com.alibaba.dubbo.common.compiler.Compiler compiler = ExtensionLoader.getExtensi
 return compiler.compile(code, classLoader);
 ```
 
+上面生成的类的源码有必要展示一下，这样可以明白它到底是如何实现的适配的
+
+```java
+public class Protocol$Adaptive implements
+com.alibaba.dubbo.rpc.Protocol {
+public void destroy() {
+throw new UnsupportedOperationException("method
+public abstract void com.alibaba.dubbo.rpc.Protocol.destroy()
+of interface com.alibaba.dubbo.rpc.Protocol is not adaptive
+method!");
+}
+public int getDefaultPort() {
+throw new UnsupportedOperationException("method
+public abstract int
+com.alibaba.dubbo.rpc.Protocol.getDefaultPort() of interface
+com.alibaba.dubbo.rpc.Protocol is not adaptive method!");
+}
+public com.alibaba.dubbo.rpc.Invoker refer(java.lang.Class
+arg0, com.alibaba.dubbo.common.URL arg1) throws
+com.alibaba.dubbo.rpc.RpcException {
+if (arg1 == null) throw new
+IllegalArgumentException("url == null");
+com.alibaba.dubbo.common.URL url = arg1;
+String extName = (url.getProtocol() == null ?
+"dubbo" : url.getProtocol());
+if (extName == null)
+throw new IllegalStateException("Fail to get
+extension(com.alibaba.dubbo.rpc.Protocol) name from url(" +
+url.toString() + ") use keys([protocol])");
+com.alibaba.dubbo.rpc.Protocol extension =
+(com.alibaba.dubbo.rpc.Protocol)
+ExtensionLoader. getExtensionLoader (com.alibaba.dubbo.rpc.P
+rotocol.class).getExtension(extName);
+return extension.refer(arg0, arg1);
+}
+public com.alibaba.dubbo.rpc.Exporter
+export(com.alibaba.dubbo.rpc.Invoker arg0) throws
+com.alibaba.dubbo.rpc.RpcException {
+if (arg0 == null) throw new
+IllegalArgumentException("com.alibaba.dubbo.rpc.Invoker
+argument == null");
+if (arg0.getUrl() == null)
+throw new
+IllegalArgumentException("com.alibaba.dubbo.rpc.Invoker
+argument getUrl() == null");
+com.alibaba.dubbo.common.URL url = arg0.getUrl();
+String extName = (url.getProtocol() == null ?
+"dubbo" : url.getProtocol());
+if (extName == null)
+throw new IllegalStateException("Fail to get
+extension(com.alibaba.dubbo.rpc.Protocol) name from url(" +
+url.toString() + ") use keys([protocol])");
+com.alibaba.dubbo.rpc.Protocol extension =
+(com.alibaba.dubbo.rpc.Protocol)
+ExtensionLoader. getExtensionLoader (com.alibaba.dubbo.rpc.P
+rotocol.class).getExtension(extName);
+return extension.export(arg0);
+}
+}
+```
+
+
+
+
+
 createAdaptiveExtensionClassCode方法具体的创建过程就不贴代码了，并不影响对SPI的理解，到这一步就创建完成了一个适配点
 
 PS 之前的objectFactory 我们现在可以讲一下了，通过上文你应该能够自己去试着理解了，它同样是创建了一个适配点对象，在配置文件中我们发现它的实现类AdaptiveExtensionFactory类上面有注解@Adaptive 于是乎，聪明的你应该能想到是怎么回事了，对，创建的就是这个对象，上面已经交代清楚了，如果还是不清楚，请回看，看仔细 看明白 ，
