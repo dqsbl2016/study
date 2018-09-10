@@ -31,3 +31,9 @@
 15、说几个zookeeper常用的命令。
 
 16、都有哪些情况会触发zookeeper选举？
+
+
+
+
+
+https://yq.aliyun.com/ziliao/302113
