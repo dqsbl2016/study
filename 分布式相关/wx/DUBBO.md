@@ -1040,7 +1040,9 @@ anyServices.add(service);
 
 还是看 InitializingBean 接口的afterPropertiesSet方法，这个作为一个入口类方法，在其中对基础数据进行初始化，然后依次调用getObject方法、get方法、init方法、createProxy方法 后两个方法都 refreshenceConfig)，在，createProxy方法中创建具体的代理，我们从这句开始分析吧
 
-先是判断是否jvm方式，
+先是判断是否jvm方式，如果在设置了url的情况下不做本地引用了，这里的url是null，然后判断isInjvm=false
+
+继续走流程执行loadRegistries方法，这个是获取所有registery的配置，在我们的配置中是是设置了一个register协议,继续走，因为只只配了一个所有会走invoker = refprotocol.refer(interfaceClass, urls.get(0));这个流程这个就是直接返回了refer后的invoke，如果配置了多个注册中心，那么就会走下面的逻辑，首先构建一个invokers的列表对象，将所有的注册中心地址都执行refprotocol.refer(interfaceClass, url)，然后相应的invoke对象保存到invokers列表中，这时候用registryURL保存了最后一个url地址，如果是注册的url，则针对注册中心进行负载，如果没有，则使用默认的进行负载获取最终的invoke对象，之后对这个invoke对象进行创建代理然后返回。下面针对refprotocol.refer(interfaceClass, url)进行分析，这时候refprotocol=processfilter(processListener(registeryProtocol))这样的结构，和服务端发布是一样的，只不过执行的方法不同，下面直接分析registeryProtocol的refer方法
 
 ```java
 URL tmpUrl = new URL("temp", "localhost", 0, map);
@@ -1134,21 +1136,126 @@ if (isJvmRefer) {
       return (T) proxyFactory.getProxy(invoker)
 ```
 
-java
+registeryProtocol >>refer方法，第一句是重新设置了协议，这个是获取registery中的配置的协议，这里是zookeeper；接着往下走 这时候通过SPI机制获取的registery=ZookeeperRegistryFactory，我们继续跟进getRegistry方法，这时候调用的是其父类的getRegistry方法，这个要注意，领域涉及的思想，继续分析getRegistry方法
+
+```java
+url = url.setProtocol(url.getParameter(Constants.REGISTRY_KEY, Constants.DEFAULT_REGISTRY)).removeParameter(Constants.REGISTRY_KEY);
+Registry registry = registryFactory.getRegistry(url);
+if (RegistryService.class.equals(type)) {
+   return proxyFactory.getInvoker((T) registry, type, url);
+}
+
+// group="a,b" or group="*"
+Map<String, String> qs = StringUtils.parseQueryString(url.getParameterAndDecoded(Constants.REFER_KEY));
+String group = qs.get(Constants.GROUP_KEY);
+if (group != null && group.length() > 0 ) {
+    if ( ( Constants.COMMA_SPLIT_PATTERN.split( group ) ).length > 1
+            || "*".equals( group ) ) {
+        return doRefer( getMergeableCluster(), registry, type, url );
+    }
+}
+return doRefer(cluster, registry, type, url);
+```
 
 
 
+AbstractRegistryFactory>>getRegistry方法；这里是通过加锁的方法创建一个单例的注册配置，继续跟进createRegistry
 
+```java
+url = url.setPath(RegistryService.class.getName())
+      .addParameter(Constants.INTERFACE_KEY, RegistryService.class.getName())
+      .removeParameters(Constants.EXPORT_KEY, Constants.REFER_KEY);
+String key = url.toServiceString();
+   // 锁定注册中心获取过程，保证注册中心单一实例
+   LOCK.lock();
+   try {
+       Registry registry = REGISTRIES.get(key);
+       if (registry != null) {
+           return registry;
+       }
+       registry = createRegistry(url);
+       if (registry == null) {
+           throw new IllegalStateException("Can not create registry " + url);
+       }
+       REGISTRIES.put(key, registry);
+       return registry;
+   } finally {
+       // 释放锁
+       LOCK.unlock();
+   }
+```
 
+ZookeeperRegistryFactory>> createRegistry方法，这里是构建了一个新的zookeeper的注册中心，
 
+```java
+return new ZookeeperRegistry(url, zookeeperTransporter);
+```
 
+ZookeeperRegistry>>构造方法，在这里我们看到了是创建了zkClient的客户端，并且建立了连接，返回注册中心对象
 
+```java
+ super(url);
+   if (url.isAnyHost()) {
+   throw new IllegalStateException("registry address == null");
+}
+   String group = url.getParameter(Constants.GROUP_KEY, DEFAULT_ROOT);
+   if (! group.startsWith(Constants.PATH_SEPARATOR)) {
+       group = Constants.PATH_SEPARATOR + group;
+   }
+   this.root = group;
+   zkClient = zookeeperTransporter.connect(url);
+   zkClient.addStateListener(new StateListener() {
+       public void stateChanged(int state) {
+           if (state == RECONNECTED) {
+           try {
+   recover();
+} catch (Exception e) {
+   logger.error(e.getMessage(), e);
+}
+           }
+       }
+   });
+```
 
+这时候继续从RegisteryProtocol>>refer方法里 已经获取了registery 就是上面的 都是这一句话执行的流程Registry registry = registryFactory.getRegistry(url); 继续继续往下走，下面的两个class类型判断肯定不相等，不是一种类型的，然后继续走，这时候配置文件中没有设置group属性，所以也不会进入下面的逻辑判断中去，最后执行的是doRefer(cluster, registry, type, url),那么继续跟进
 
+```java
+url = url.setProtocol(url.getParameter(Constants.REGISTRY_KEY, Constants.DEFAULT_REGISTRY)).removeParameter(Constants.REGISTRY_KEY);
+Registry registry = registryFactory.getRegistry(url);
+if (RegistryService.class.equals(type)) {
+   return proxyFactory.getInvoker((T) registry, type, url);
+}
 
+// group="a,b" or group="*"
+Map<String, String> qs = StringUtils.parseQueryString(url.getParameterAndDecoded(Constants.REFER_KEY));
+String group = qs.get(Constants.GROUP_KEY);
+if (group != null && group.length() > 0 ) {
+    if ( ( Constants.COMMA_SPLIT_PATTERN.split( group ) ).length > 1
+            || "*".equals( group ) ) {
+        return doRefer( getMergeableCluster(), registry, type, url );
+    }
+}
+return doRefer(cluster, registry, type, url);
+```
 
+RegisteryProtocol>>doRefer方法，这个方法的信息量大，首先构建了一个注册目录对象
 
-
+```java
+RegistryDirectory<T> directory = new RegistryDirectory<T>(type, url);
+directory.setRegistry(registry);
+directory.setProtocol(protocol);
+URL subscribeUrl = new URL(Constants.CONSUMER_PROTOCOL, NetUtils.getLocalHost(), 0, type.getName(), directory.getUrl().getParameters());
+if (! Constants.ANY_VALUE.equals(url.getServiceInterface())
+        && url.getParameter(Constants.REGISTER_KEY, true)) {
+    registry.register(subscribeUrl.addParameters(Constants.CATEGORY_KEY, Constants.CONSUMERS_CATEGORY,
+            Constants.CHECK_KEY, String.valueOf(false)));
+}
+directory.subscribe(subscribeUrl.addParameter(Constants.CATEGORY_KEY, 
+        Constants.PROVIDERS_CATEGORY 
+        + "," + Constants.CONFIGURATORS_CATEGORY 
+        + "," + Constants.ROUTERS_CATEGORY));
+return cluster.join(directory);
+```
 
 
 
