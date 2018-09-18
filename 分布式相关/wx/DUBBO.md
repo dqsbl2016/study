@@ -1441,59 +1441,302 @@ return Proxy.getProxy(interfaces).newInstance(new InvokerInvocationHandler(invok
 
 ### 客户端调用方法
 
+客户端调用方法就是执行proxy0代理的过程。上面已经解析了，客户端发布后 生成的对象结构，那么我们就以此为切入点，讲一讲客户端调用过程
+
+首先是 InvokerInvocationHandler >> invoker方法，获取方法名称和方法需要的参数类型，然后通过三目表达式判断执行的功能，最后执行的是this.invoker.invoke(new RpcInvocation(method, args)，这里的invoker=MockClusterInvoker
+
+```java
+String methodName = method.getName();
+Class[] parameterTypes = method.getParameterTypes();
+return method.getDeclaringClass() == Object.class?method.invoke(this.invoker, args):("toString".equals(methodName) && parameterTypes.length == 0?this.invoker.toString():("hashCode".equals(methodName) && parameterTypes.length == 0?Integer.valueOf(this.invoker.hashCode()):("equals".equals(methodName) && parameterTypes.length == 1?Boolean.valueOf(this.invoker.equals(args[0])):this.invoker.invoke(new RpcInvocation(method, args)).recreate())));
+```
+
+
+
+MockClusterInvoker>> invoker,该方法主要是检查是否配置了mock机制，如果配置了 走doMockInvoker方法，如果没有走 this.invoker.invoke(invocation)方法，我们的配置文件没有配置mock机制，
+
+```java
+Result result = null;
+        String value = directory.getUrl().getMethodParameter(invocation.getMethodName(), Constants.MOCK_KEY, Boolean.FALSE.toString()).trim(); 
+        if (value.length() == 0 || value.equalsIgnoreCase("false")){
+        	//no mock
+        	result = this.invoker.invoke(invocation);
+        } else if (value.startsWith("force")) {
+        	if (logger.isWarnEnabled()) {
+        		logger.info("force-mock: " + invocation.getMethodName() + " force-mock enabled , url : " +  directory.getUrl());
+        	}
+        	//force:direct mock
+        	result = doMockInvoke(invocation, null);
+        } else {
+        	//fail-mock
+        	try {
+        		result = this.invoker.invoke(invocation);
+        	}catch (RpcException e) {
+				if (e.isBiz()) {
+					throw e;
+				} else {
+					if (logger.isWarnEnabled()) {
+		        		logger.info("fail-mock: " + invocation.getMethodName() + " fail-mock enabled , url : " +  directory.getUrl(), e);
+		        	}
+					result = doMockInvoke(invocation, e);
+				}
+			}
+        }
+```
+
+AbstractClusterInvoker>>invoker,根据invocation获取所有的注册了该类型的调用器，然后获取了负载均衡对象RandomLoadBalance是默认的,接着执行doInvoke
+
+```java
+checkWhetherDestroyed();
+
+LoadBalance loadbalance;
+
+List<Invoker<T>> invokers = list(invocation);
+if (invokers != null && invokers.size() > 0) {
+    loadbalance = ExtensionLoader.getExtensionLoader(LoadBalance.class).getExtension(invokers.get(0).getUrl()
+            .getMethodParameter(invocation.getMethodName(),Constants.LOADBALANCE_KEY, Constants.DEFAULT_LOADBALANCE));
+} else {
+    loadbalance = ExtensionLoader.getExtensionLoader(LoadBalance.class).getExtension(Constants.DEFAULT_LOADBALANCE);
+}
+RpcUtils.attachInvocationIdIfAsync(getUrl(), invocation);
+return doInvoke(invocation, invokers, loadbalance);
+```
+
+FailOverClusterInvoker >>doInvoke  首先判断invokers是否 有效，在接下来的流程中又进行了判断，为了避免重试时列表发生变化
+
+```java
+List<Invoker<T>> copyinvokers = invokers;
+checkInvokers(copyinvokers, invocation);
+   int len = getUrl().getMethodParameter(invocation.getMethodName(), Constants.RETRIES_KEY, Constants.DEFAULT_RETRIES) + 1;
+   if (len <= 0) {
+       len = 1;
+   }
+   // retry loop.
+   RpcException le = null; // last exception.
+   List<Invoker<T>> invoked = new ArrayList<Invoker<T>>(copyinvokers.size()); // invoked invokers.
+   Set<String> providers = new HashSet<String>(len);
+   for (int i = 0; i < len; i++) {
+       //重试时，进行重新选择，避免重试时invoker列表已发生变化.
+       //注意：如果列表发生了变化，那么invoked判断会失效，因为invoker示例已经改变
+       if (i > 0) {
+          checkWhetherDestroyed();
+          copyinvokers = list(invocation);
+          //重新检查一下
+          checkInvokers(copyinvokers, invocation);
+       }
+       Invoker<T> invoker = select(loadbalance, invocation, copyinvokers, invoked);
+       invoked.add(invoker);
+       RpcContext.getContext().setInvokers((List)invoked);
+       try {
+           Result result = invoker.invoke(invocation);
+           if (le != null && logger.isWarnEnabled()) {
+               logger.warn("Although retry the method " + invocation.getMethodName()
+                       + " in the service " + getInterface().getName()
+                       + " was successful by the provider " + invoker.getUrl().getAddress()
+                       + ", but there have been failed providers " + providers 
+                       + " (" + providers.size() + "/" + copyinvokers.size()
+                       + ") from the registry " + directory.getUrl().getAddress()
+                       + " on the consumer " + NetUtils.getLocalHost()
+                       + " using the dubbo version " + Version.getVersion() + ". Last error is: "
+                       + le.getMessage(), le);
+           }
+           return result;
+```
+
+
+
+AbstractClusterInvoker>>select 负载选择
+
+```java
+if (invokers == null || invokers.size() == 0)
+    return null;
+String methodName = invocation == null ? "" : invocation.getMethodName();
+
+boolean sticky = invokers.get(0).getUrl().getMethodParameter(methodName,Constants.CLUSTER_STICKY_KEY, Constants.DEFAULT_CLUSTER_STICKY) ;
+{
+    //ignore overloaded method
+    if ( stickyInvoker != null && !invokers.contains(stickyInvoker) ){
+        stickyInvoker = null;
+    }
+    //ignore cucurrent problem
+    if (sticky && stickyInvoker != null && (selected == null || !selected.contains(stickyInvoker))){
+        if (availablecheck && stickyInvoker.isAvailable()){
+            return stickyInvoker;
+        }
+    }
+}
+Invoker<T> invoker = doselect(loadbalance, invocation, invokers, selected);
+
+if (sticky){
+    stickyInvoker = invoker;
+}
+return invoker;
+```
+
+AbstractClusterInvoker>>doSelect 负载选择 最后返回一个负载后的invoker
+
+```java
+if (invokers == null || invokers.size() == 0)
+    return null;
+if (invokers.size() == 1)
+    return invokers.get(0);
+// 如果只有两个invoker，退化成轮循
+if (invokers.size() == 2 && selected != null && selected.size() > 0) {
+    return selected.get(0) == invokers.get(0) ? invokers.get(1) : invokers.get(0);
+}
+Invoker<T> invoker = loadbalance.select(invokers, getUrl(), invocation);
+
+//如果 selected中包含（优先判断） 或者 不可用&&availablecheck=true 则重试.
+if( (selected != null && selected.contains(invoker))
+        ||(!invoker.isAvailable() && getUrl()!=null && availablecheck)){
+    try{
+        Invoker<T> rinvoker = reselect(loadbalance, invocation, invokers, selected, availablecheck);
+        if(rinvoker != null){
+            invoker =  rinvoker;
+        }else{
+            //看下第一次选的位置，如果不是最后，选+1位置.
+            int index = invokers.indexOf(invoker);
+            try{
+                //最后在避免碰撞
+                invoker = index <invokers.size()-1?invokers.get(index+1) :invoker;
+            }catch (Exception e) {
+                logger.warn(e.getMessage()+" may because invokers list dynamic change, ignore.",e);
+            }
+        }
+    }catch (Throwable t){
+        logger.error("clustor relselect fail reason is :"+t.getMessage() +" if can not slove ,you can set cluster.availablecheck=false in url",t);
+    }
+}
+return invoker;
+```
 
 
 
 
 
+通过这种方式RefistryDirectory $InvokeDeleged (ListenerInvokeWrapper(ProtocolFilterWrapper（DubboInvoke）))
+
+进行执行ProtocolFilterrapper中设置了很多过滤器，比如下面这些就是所有的过滤器
+
+```java
+echo=com.alibaba.dubbo.rpc.filter.EchoFilter
+generic=com.alibaba.dubbo.rpc.filter.GenericFilter
+genericimpl=com.alibaba.dubbo.rpc.filter.GenericImplFilter
+token=com.alibaba.dubbo.rpc.filter.TokenFilter
+accesslog=com.alibaba.dubbo.rpc.filter.AccessLogFilter
+activelimit=com.alibaba.dubbo.rpc.filter.ActiveLimitFilter
+classloader=com.alibaba.dubbo.rpc.filter.ClassLoaderFilter
+context=com.alibaba.dubbo.rpc.filter.ContextFilter
+consumercontext=com.alibaba.dubbo.rpc.filter.ConsumerContextFilter
+exception=com.alibaba.dubbo.rpc.filter.ExceptionFilter
+executelimit=com.alibaba.dubbo.rpc.filter.ExecuteLimitFilter
+deprecated=com.alibaba.dubbo.rpc.filter.DeprecatedFilter
+compatible=com.alibaba.dubbo.rpc.filter.CompatibleFilter
+timeout=com.alibaba.dubbo.rpc.filter.TimeoutFilter
+monitor=com.alibaba.dubbo.monitor.support.MonitorFilter
+validation=com.alibaba.dubbo.validation.filter.ValidationFilter
+cache=com.alibaba.dubbo.cache.filter.CacheFilter
+trace=com.alibaba.dubbo.rpc.protocol.dubbo.filter.TraceFilter
+future=com.alibaba.dubbo.rpc.protocol.dubbo.filter.FutureFilter
+```
 
 
 
+因为DubboInvoke中没有invoke方法，所以找到了父类AbstractInvoke中的该方法继续执行，执行以下逻辑。将invoker、attachment、context等参数设置到invocation中去，接着执行DubboInvoker中的doInvoke方法 
+
+```java
+if(destroyed) {
+    throw new RpcException("Rpc invoker for service " + this + " on consumer " + NetUtils.getLocalHost() 
+                                    + " use dubbo version " + Version.getVersion()
+                                    + " is DESTROYED, can not be invoked any more!");
+}
+RpcInvocation invocation = (RpcInvocation) inv;
+invocation.setInvoker(this);
+if (attachment != null && attachment.size() > 0) {
+   invocation.addAttachmentsIfAbsent(attachment);
+}
+Map<String, String> context = RpcContext.getContext().getAttachments();
+if (context != null) {
+   invocation.addAttachmentsIfAbsent(context);
+}
+if (getUrl().getMethodParameter(invocation.getMethodName(), Constants.ASYNC_KEY, false)){
+   invocation.setAttachment(Constants.ASYNC_KEY, Boolean.TRUE.toString());
+}
+RpcUtils.attachInvocationIdIfAsync(getUrl(), invocation);
+
+
+try {
+    return doInvoke(invocation);
+```
+
+DubboInvoker>>doInvoke  获取客户端交换器对象，检查是否单一方式、是否异步获取结果，都不是，最后执行 (Result) currentClient.request(inv, timeout).get()方法
+
+```java
+RpcInvocation inv = (RpcInvocation) invocation;
+final String methodName = RpcUtils.getMethodName(invocation);
+inv.setAttachment(Constants.PATH_KEY, getUrl().getPath());
+inv.setAttachment(Constants.VERSION_KEY, version);
+
+ExchangeClient currentClient;
+if (clients.length == 1) {
+    currentClient = clients[0];
+} else {
+    currentClient = clients[index.getAndIncrement() % clients.length];
+}
+try {
+    boolean isAsync = RpcUtils.isAsync(getUrl(), invocation);
+    boolean isOneway = RpcUtils.isOneway(getUrl(), invocation);
+    int timeout = getUrl().getMethodParameter(methodName, Constants.TIMEOUT_KEY,Constants.DEFAULT_TIMEOUT);
+    if (isOneway) {
+       boolean isSent = getUrl().getMethodParameter(methodName, Constants.SENT_KEY, false);
+        currentClient.send(inv, isSent);
+        RpcContext.getContext().setFuture(null);
+        return new RpcResult();
+    } else if (isAsync) {
+       ResponseFuture future = currentClient.request(inv, timeout) ;
+        RpcContext.getContext().setFuture(new FutureAdapter<Object>(future));
+        return new RpcResult();
+    } else {
+       RpcContext.getContext().setFuture(null);
+        return (Result) currentClient.request(inv, timeout).get();
+    }
+} catch (TimeoutException e) {
+```
 
 
 
+HeaderExchangeClient>>request   channel=HeaderExchangeChannel
+
+```java
+return this.channel.request(request, timeout);
+```
+
+HeaderExchangeChannel>>request  首先构建request请求对象，讲需要的参数封装完成，调用send方法
+
+ channel.send(req);这句话就是客户端发送请求到服务端进行处理了，并且同步等待结果，至此客户端调用结束
+
+```java
+if (closed) {
+    throw new RemotingException(this.getLocalAddress(), null, "Failed to send request " + request + ", cause: The channel " + this + " is closed!");
+}
+// create request.
+Request req = new Request();
+req.setVersion("2.0.0");
+req.setTwoWay(true);
+req.setData(request);
+DefaultFuture future = new DefaultFuture(channel, req, timeout);
+try{
+    channel.send(req);
+}catch (RemotingException e) {
+    future.cancel();
+    throw e;
+}
+return future
+```
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### 服务端处理返回结果
 
 
 
