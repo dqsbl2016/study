@@ -1238,7 +1238,7 @@ if (group != null && group.length() > 0 ) {
 return doRefer(cluster, registry, type, url);
 ```
 
-RegisteryProtocol>>doRefer方法，这个方法的信息量大，首先构建了一个注册目录对象
+RegisteryProtocol>>doRefer方法，这个方法的信息量大，首先构建了一个注册目录对象，然后传入注册中心对象和协议对象，这时候registery=ZookeeperRegistery    dubbo=ProtocolFilter(protocolListener(DubboProtocol))，构建一个以consumer开头的协议地址，然后进行注册到注册中心，这里调用的是registry.register（）方法进行注册的；继续往下走可以看到一个subscribe方法，这个是对注册的服务进行订阅服务，订阅服务端发布的接口， cluster.join(directory)=MockclusterWrapper（FailOverCluster))这种类型的Invoker
 
 ```java
 RegistryDirectory<T> directory = new RegistryDirectory<T>(type, url);
@@ -1259,35 +1259,187 @@ return cluster.join(directory);
 
 
 
+书接上文，上面都是refprotocol.refer(interfaceClass, url)所走的流程，最后返回MockclusterWrapper（FailOverCluster))这样的对象进行保存，
+
+我们现在的位置是RefrenceConfig>> createProxy方法的这一段，
+
+下面判断是否有注册中心的协议，如果有则构建注册中心的url，然后调用负载方法，进行负载操作，默认使用随机的负载策略，invoker = cluster.join(new StaticDirectory(u, invokers));通过执行MockClusterWrapper（AvailableCluster））进行负载, 跟进AvailableCluster的join方法一探究竟
+
+```java
+
+ if (registryURL != null) { // 有 注册中心协议的URL
+                  // 对有注册中心的Cluster 只用 AvailableCluster
+                  URL u = registryURL.addParameter(Constants.CLUSTER_KEY, AvailableCluster.NAME); 
+                  invoker = cluster.join(new StaticDirectory(u, invokers));
+              }  else { // 不是 注册中心的URL
+                  invoker = cluster.join(new StaticDirectory(invokers));
+              }
+          }
+      }
+
+Boolean c = check;
+  if (c == null && consumer != null) {
+      c = consumer.isCheck();
+  }
+  if (c == null) {
+      c = true; // default true
+  }
+  if (c && ! invoker.isAvailable()) {
+      throw new IllegalStateException("Failed to check the status of the service " + interfaceName + ". No provider available for the service " + (group == null ? "" : group + "/") + interfaceName + (version == null ? "" : ":" + version) + " from the url " + invoker.getUrl() + " to the consumer " + NetUtils.getLocalHost() + " use dubbo version " + Version.getVersion());
+  }
+  if (logger.isInfoEnabled()) {
+      logger.info("Refer dubbo service " + interfaceClass.getName() + " from url " + invoker.getUrl());
+  }
+  // 创建服务代理
+  return (T) proxyFactory.getProxy(invoker)
+```
+MockClusterWrapper >>join 这里还是SPI机制，MockClusterWrapper是包装类，在构建目标扩展点的时候，会被此类包装
+
+```java
+return new MockClusterInvoker(directory, this.cluster.join(directory));
+```
+
+AvailableCluster>>join 会返回一个AbstractClusterInvoker的对象
+
+```java
+return new AbstractClusterInvoker(directory) {
+    public Result doInvoke(Invocation invocation, List<Invoker<T>> invokers, LoadBalance loadbalance) throws RpcException {
+        Iterator i$ = invokers.iterator();
+
+        Invoker invoker;
+        do {
+            if(!i$.hasNext()) {
+                throw new RpcException("No provider available in " + invokers);
+            }
+
+            invoker = (Invoker)i$.next();
+        } while(!invoker.isAvailable());
+
+        return invoker.invoke(invocation);
+    }
+};
+```
+
+继续返回到调用点，上面的执行逻辑是基于 cluster.join(new StaticDirectory(u, invokers))这句话的，那么这时候返回一个执行invoker 它包装了MockClusterInvoker（AvailableCusterInvoker(这里返回一个abstractClusterInvoke),继续跟进proxyFactory.getProxy(invoker)
+
+```java
+  if (registryURL != null) { // 有 注册中心协议的URL
+            // 对有注册中心的Cluster 只用 AvailableCluster
+            URL u = registryURL.addParameter(Constants.CLUSTER_KEY, AvailableCluster.NAME); 
+            invoker = cluster.join(new StaticDirectory(u, invokers));
+        }  else { // 不是 注册中心的URL
+            invoker = cluster.join(new StaticDirectory(invokers));
+        }
+    }
+}
+
+Boolean c = check;
+if (c == null && consumer != null) {
+    c = consumer.isCheck();
+}
+if (c == null) {
+    c = true; // default true
+}
+if (c && ! invoker.isAvailable()) {
+    throw new IllegalStateException("Failed to check the status of the service " + interfaceName + ". No provider available for the service " + (group == null ? "" : group + "/") + interfaceName + (version == null ? "" : ":" + version) + " from the url " + invoker.getUrl() + " to the consumer " + NetUtils.getLocalHost() + " use dubbo version " + Version.getVersion());
+}
+if (logger.isInfoEnabled()) {
+    logger.info("Refer dubbo service " + interfaceClass.getName() + " from url " + invoker.getUrl());
+}
+// 创建服务代理
+return (T) proxyFactory.getProxy(invoker);
+```
 
 
 
+ReferenceConfig>>createProxy
+
+继续跟进proxyFactory.getProxy(invoker) 还是SPI机制 proxyFactory=StubProxyFactoryWrapper（JavassistProxyFactory））
+
+StubProxyFactoryWrapper >>getProxy方法，当前执行这个方法，第一句又是调用得到代理，这时候ProxyFactory=JavasistProxyFactory，因为该类没有getProxy（Invoker invoker）方法，所以找到它的父类AbstractProxyFactory中的该方法，现在看下它父类的该方法做了些什么
+
+```java
+Object proxy = this.proxyFactory.getProxy(invoker);
+if(GenericService.class != invoker.getInterface()) {
+    String stub = invoker.getUrl().getParameter("stub", invoker.getUrl().getParameter("local"));
+    if(ConfigUtils.isNotEmpty(stub)) {
+        Class serviceType = invoker.getInterface();
+        if(ConfigUtils.isDefault(stub)) {
+            if(invoker.getUrl().hasParameter("stub")) {
+                stub = serviceType.getName() + "Stub";
+            } else {
+                stub = serviceType.getName() + "Local";
+            }
+        }
+
+        try {
+            Class t = ReflectUtils.forName(stub);
+            if(!serviceType.isAssignableFrom(t)) {
+                throw new IllegalStateException("The stub implemention class " + t.getName() + " not implement interface " + serviceType.getName());
+            }
+
+            try {
+                Constructor e = ReflectUtils.findConstructor(t, serviceType);
+                proxy = e.newInstance(new Object[]{proxy});
+                URL url = invoker.getUrl();
+                if(url.getParameter("dubbo.stub.event", false)) {
+                    url = url.addParameter("dubbo.stub.event.methods", StringUtils.join(Wrapper.getWrapper(proxy.getClass()).getDeclaredMethodNames(), ","));
+                    url = url.addParameter("isserver", Boolean.FALSE.toString());
+
+                    try {
+                        this.export(proxy, invoker.getInterface(), url);
+                    } catch (Exception var9) {
+                        LOGGER.error("export a stub service error.", var9);
+                    }
+                }
+            } catch (NoSuchMethodException var10) {
+                throw new IllegalStateException("No such constructor \"public " + t.getSimpleName() + "(" + serviceType.getName() + ")\" in stub implemention class " + t.getName(), var10);
+            }
+        } catch (Throwable var11) {
+            LOGGER.error("Failed to create stub implemention class " + stub + " in consumer " + NetUtils.getLocalHost() + " use dubbo version " + Version.getVersion() + ", cause: " + var11.getMessage(), var11);
+        }
+```
 
 
 
+AbstractProxyFactory>>getProxy(Invoker invoker)方法，首先获取url中的接口属性值，这里肯定是我们定义的com.hzm.dubbo.UserService，这里可以是多个接口，通过逗号分隔开来，然后将这些接口进行封装成一个class的数组，最后调用this.getProxy(invoker, interfaces),这个是有两个参数的方法，在JavasistProxyFactory类中是存在该方法的，所以代码又回到了JavasistProxyFactory中
+
+```java
+Class[] interfaces = null;
+String config = invoker.getUrl().getParameter("interfaces");
+if(config != null && config.length() > 0) {
+    String[] types = Constants.COMMA_SPLIT_PATTERN.split(config);
+    if(types != null && types.length > 0) {
+        interfaces = new Class[types.length + 2];
+        interfaces[0] = invoker.getInterface();
+        interfaces[1] = EchoService.class;
+
+        for(int i = 0; i < types.length; ++i) {
+            interfaces[i + 1] = ReflectUtils.forName(types[i]);
+        }
+    }
+}
+
+if(interfaces == null) {
+    interfaces = new Class[]{invoker.getInterface(), EchoService.class};
+}
+
+return this.getProxy(invoker, interfaces);
+```
 
 
 
+JavasistProxyFactory>>getProxy(Invoker<T> invoker, Class<?>[] interfaces)方法，
 
+Proxy.getProxy(interfaces)这个方法是根据传入的接口进行代理实现，返回一个代理class然后利用反射生成一个对象，之后传入一个Invoker类型的参数，这里是new InvokerInvocationHandler(invoker),这里返回的proxy=proxy0(InvokerInvocationHandler(MockClusterInvoker（AbstractClusterInvoker）)
 
+```java
+return Proxy.getProxy(interfaces).newInstance(new InvokerInvocationHandler(invoker));
+```
 
+到现在为止客户端生成了这样的代理对象，进行返回
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### 客户端调用方法
 
 
 
