@@ -1738,29 +1738,92 @@ return future
 
 ### 服务端处理返回结果
 
+服务端处理消息的入口点是NettyHandler>>messageReceived,
+
+第一句是获取channel 还是先走缓存中取，没有的话构建一个新的NettyChannel对象，
+
+直接往下走handler=（MultiMessageHandler(HeadbeatHandler(AllChannelHandler(DecodeHandler(HeaderExchangeHandler(DubboProtocol)))))
+
+这个我调试的时候看的结构层次，当然在服务发布的时候，封装了这些，我们可以看下发布的时候进行的包装
+
+```java
+NettyChannel channel = NettyChannel.getOrAddChannel(ctx.getChannel(), this.url, this.handler);
+
+try {
+    this.handler.received(channel, e.getMessage());
+} finally {
+    NettyChannel.removeChannelIfDisconnected(ctx.getChannel());
+}
+```
+
+下面两个是包装最终的dubboProtocol的地方
+
+HeaderExchanger.bind
+
+**public** ExchangeServer bind(URL url, ExchangeHandler handler) **throws** RemotingException {     **return new** HeaderExchangeServer(Transporters.*bind*(url, **new** DecodeHandler(**new** HeaderExchangeHandler(handler)))); }
+
+```java
+return new HeaderExchangeServer(Transporters.bind(url, new DecodeHandler(new HeaderExchangeHandler(handler))));
+```
+
+ChannelHandlers>>wrapInternal
+
+```java
+return new MultiMessageHandler(new HeartbeatHandler(ExtensionLoader.getExtensionLoader(Dispatcher.class)
+                                .getAdaptiveExtension().dispatch(handler, url)));
+```
+
+所以服务端的handler处理链为
+MultiMessageHandler(HeartbeatHandler(AllChannelHandler(DecodeHandler)))
+MultiMessageHandler: 复合消息处理
+HeartbeatHandler：心跳消息处理，接收心跳并发送心跳响应
+AllChannelHandler：业务线程转化处理器，把接收到的消息封装成ChannelEventRunnable可执行任务给线程池处理
+DecodeHandler:业务解码处理器
+HeaderExchangeHandler.received
+
+DubboProtocol
+
+代码的调用过程 遵循上面的嵌套的结构，
+
+上面已经做出了对应的解释，这里代理就不贴了，服务的发布已经贴过，
+
+那么最后对DubboProtocol进行一下解析
+
+ExchangeHandlerAdaptive.replay(DubboProtocol)
+调用DubboProtocol中定义的ExchangeHandlerAdaptive.replay方法处理消息
+
+private ExchangeHandler requestHandler = new ExchangeHandlerAdapter() {
+    
+```java
+public Object reply(ExchangeChannel channel, Object message) throws RemotingException {
+ invoker.invoke(inv);
+}
+```
 
 
+那接下来invoker.invoke会调用哪个类中的方法呢？还记得在RegistryProtocol中发布本地方法的时候，对invoker做的包装吗？通过InvokerDelegete对原本的invoker做了一层包装，而原本的invoker是什么呢？是一个JavassistProxyFactory生成的动态代理吧。所以此处的invoker应该是
 
+Filter(Listener(InvokerDelegete(AbstractProxyInvoker (Wrapper.invokeMethod)))
 
+RegistryProtocol生成invoker的代码如下
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+```java
+private <T> ExporterChangeableWrapper<T>  doLocalExport(final Invoker<T> originInvoker){
+    String key = getCacheKey(originInvoker);
+    ExporterChangeableWrapper<T> exporter = (ExporterChangeableWrapper<T>) bounds.get(key);
+    if (exporter == null) {
+        synchronized (bounds) {
+            exporter = (ExporterChangeableWrapper<T>) bounds.get(key);
+            if (exporter == null) {
+                final Invoker<?> invokerDelegete = new InvokerDelegete<T>(originInvoker, getProviderUrl(originInvoker));
+                exporter = new ExporterChangeableWrapper<T>((Exporter<T>)protocol.export(invokerDelegete), originInvoker);
+                bounds.put(key, exporter);
+            }
+        }
+    }
+    return (ExporterChangeableWrapper<T>) exporter;
+}
+```
 
 
 
