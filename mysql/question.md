@@ -164,3 +164,141 @@
 * mysql无法使用前缀索引做order by 与 group by
 * 无法使用前缀索引做扫描覆盖(Covering Index) ，即当索引本身包含查询所需全部数据时，不再访问数据文件本身 
 
+# InnoDB，快照读，在RR和RC下有何差异
+
+RC-读取已提交
+
+- 数据库领域，事务隔离级别的一种，简称RC
+- 它解决“读脏”问题，保证读取到的数据行都是已提交事务写入的
+- 它可能存在“读幻影行”问题，同一个事务里，连续相同的read可能读到不同的结果集
+
+RR-可重复读
+
+- 数据库领域，事务隔离级别的一种，简称RR
+- 它不但解决“读脏”问题，还解决了“读幻影行”问题，同一个事务里，连续相同的read读到相同的结果集
+
+```mysql
+举例：
+t(id PK, name);
+ 
+表中有三条记录：
+1, shenjian
+2, zhangsan
+3, lisi
+
+
+
+
+```
+
+```mysql
+Case 1，两个并发事务A，B执行的时间序列如下（A先于B开始，B先于A结束）：
+
+A1: start transaction;
+         B1: start transaction;
+A2: select * from t;
+         B2: insert into t values (4, wangwu);
+A3: select * from t;
+         B3: commit;
+A4: select * from t;
+
+
+RR下：
+A2会读到 1，2，3
+A3会读到 1，2，3
+A4会读到 1，2，3  可重复读的概念就是 当前事务未提交之前任何时候的读取的数据都是一致的。
+
+RC下：
+A2会读到 1，2，3
+A3会读到 1，2，3
+A4会读到 1，2，3，4  因为可以读取已提交，所以会读到B事务提交的内容
+```
+
+```mysql
+Case 2，仍然是上面的两个事务，只是A和B开始时间稍有不同（B先于A开始，B先于A结束）：
+
+         B1: start transaction;
+A1: start transaction;
+A2: select * from t;
+         B2: insert into t values (4, wangwu);
+A3: select * from t;
+         B3: commit;
+A4: select * from t;
+
+RR下：
+A2会读到 1，2，3
+A3会读到 1，2，3
+A4会读到 1，2，3  可重复读的概念就是 当前事务未提交之前任何时候的读取的数据都是一致的。
+
+RC下：
+A2会读到 1，2，3
+A3会读到 1，2，3
+A4会读到 1，2，3，4  因为可以读取已提交，所以会读到B事务提交的内容
+```
+
+```mysql
+Case 3，仍然是并发的事务A与B（A先于B开始，B先于A结束）：
+
+A1: start transaction;
+         B1: start transaction;
+         B2: insert into t values (4, wangwu);
+         B3: commit;
+A2: select * from t;
+
+RR下：
+A2会读到 1，2，3，4 为什么这里会读到4呢？因为这个是事务A的第一个read查询，所以它会查询当前时间点之前的所有已提交数据。
+
+RC下：
+A2会读到 1，2，3，4 因为可以读取已提交，所以会读到B事务提交的内容
+```
+
+```mysql
+Case 4，事务开始的时间再换一下（B先于A开始，B先于A结束）：
+
+         B1: start transaction;
+A1: start transaction;
+         B2: insert into t values (4, wangwu);
+         B3: commit;
+A2: select * from t;
+
+RR下：
+A2会读到 1，2，3，4 
+为什么这里会读到4呢？因为这个是事务A的第一个read查询，所以它会查询当前时间点之前的所有已提交数据。
+事务的开始时间不一样，不会影响快照读
+
+RC下：
+A2会读到 1，2，3，4 因为可以读取已提交，所以会读到B事务提交的内容
+```
+
+## 结论
+
+* RR下快照读，事务会在第一次Read的时候建立读的视图，会读取所有已提交的数据。
+* RC下快照都，事务在每次Read的时候都会建立读的视图，每次读都会读取当前所有已提交数据。
+
+# **主键与唯一索引约束**冲突处理
+
+* InnoDb中插入数据主键已存在会报错回滚
+
+* Myisam中会放弃后面的执行内容
+
+  * 另外，对于insert的约束冲突，可以使用：insert … on duplicate key指出**在违反主键或唯一索引约束时，需要进行的额外操作**。
+
+    * insert into t3(id) values(10) on duplicate key update flag='false'; 
+    * 如果id=10的数据存在，则执行修改此条数据的flag字段改为false。
+
+# 三范式
+
+简单一点 ：
+
+* 每一列只有一个 单一的 值 ，不可再拆分
+* 每一行都 有主键能进行 区分
+* 每一个表都不包含其他表已经包含的非主键信息
+
+问题：
+
+* 充分的满足第一范式设计将为表建立太量的列
+  * 数据从磁盘到缓冲区，缓冲区脏页到磁盘进行持久的过程中，列的数量过多会导致性能下降。过多的列影响转换和持久的性能
+* 过分的满足第三范式化造成了太多的表关联
+  * 表的关联操作将带来额外的内存和性能开销
+* 使用innodb 引擎的外键关系进行数据的完整性保证
+  * 外键表中数据的修改会导致Innodb引擎对外键约束进行检查，就带来了额外的开销
