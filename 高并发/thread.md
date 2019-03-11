@@ -100,3 +100,44 @@ Object.wait() 与 thread.join() 看起来效果一样
 
 ## 进程管理
 
+### 获取PID进程ID
+
+* java9之前
+
+  * ```java
+    RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMxBean();
+    String name = runtimeMXBean.getName();
+    String pid = name.substring(0,name.indexOf("@"))
+    ```
+
+* java9 
+
+  * ```java
+    long pid = ProcessHandle.current().pid();
+    ```
+
+* java10
+
+  * ```java
+    RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMxBean();
+    String id = runtimeMXBean.getPid();
+    ```
+
+### 获取当前JVM启动时间
+
+```java
+RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMxBean();
+// 启动时间
+Date starttime = runtimeMXBean.getStratTime();
+//上线时间
+Date starttime = runtimeMXBean.getUpTime();
+```
+
+### 获取当前jvm进程数量
+
+```java
+RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMxBean();
+// 当前jvm进程数量
+Date starttime = runtimeMXBean.getThreadCount();
+```
+
