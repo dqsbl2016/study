@@ -209,6 +209,36 @@ select * from t where id = 9 for update;
 唯一性（主键/唯一）索引，条件精准匹配，将会退化成记录锁
 ```
 
+## 如何对非主键索引的锁定
+
+```mysql
+数据例子：
+mysql> select * from z;
++----+------+
+| a  | b    |
++----+------+
+|  1 |    1 |
+|  3 |    1 |
+|  5 |    3 |
+|  7 |    6 |
+| 10 |    8 |
++----+------+
+5 rows in set (0.00 sec)
+
+例子1：
+select * from z where b=3 for update; 
+
+给辅助索引b=3加上X锁之后，由于使用的Next-Key Lock算法，并且有涉及到a=5的主键索引，会首先对 a=5 进行Record Lock锁定，然后对b=3进行Next-Key Lock锁定，即锁定(1, 3]。需要特别注意的是，InnoDB还会对辅助索引的下一个键（6）加上Gap Lock锁，即锁定(3, 6)。
+
+select * from z where a=5 lock in share mode; #2
+                                                                                                 insert into z select 4, 2; #3
+
+insert into z select 6, 5; #4
+
+insert into z select 8, 6; #5       
+                                                                                                 执行2，发现需要等待，原因是a=5索引已经被加上了X锁。 执行3，主键写入4没有问题，但辅助索引2是在锁定的范围（1，3）中。 执行4，主键写入6没有问题，但辅助索引5是在锁定的范围（3，6）中。 执行5，主键8和辅助索引6均没有问题，可以写入。       
+```
+
 ## InnoDB 如何实现事务隔离级别
 
 InnoDB使用不同的锁策略(Locking Strategy)来实现不同的隔离级别。
