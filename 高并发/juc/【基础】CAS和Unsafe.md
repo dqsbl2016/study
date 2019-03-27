@@ -58,6 +58,75 @@ public native int getInt(long var1);
 
  
 
+ # CLH锁
+
+CLH锁是一种自旋锁，实现是通过对前一个节点的锁状态进行自旋遍历(局部自旋)，然后不同请求会依次排到队列尾部再不断遍历前一个节点锁状态进行自旋，提供公平的竞争锁机会，严格的先到先得。
+
+* 首先每一个请求锁的线程都通过一个QNode对象表示，有一个**volatile** **boolean**类型的成员变量locked，locked为true，则表示对应的线程已经获取到了锁或者正在等待获取锁；locked为false，则表示对应的线程已经释放了锁。 
+
+```java
+public class QNode {
+	public volatile boolean locked = false;
+}
+```
+
+* 会有多个等待锁的QNode对象组成一个虚拟链表，QNode之间并没有类似于next指针之类的引用，QNode之间通过锁的一个本地线程（ThreadLocal）变量myPred相连，myPred指向当前节点的前驱节点，即当前线程的前一个线程。而链表的尾节点则通过锁AtomicReference<QNode>类型的tail成员变量指向，即tail指向加入到申请锁的队列中的最近一个线程。
+
+ ```java
+public class CLHLock implements Lock {
+	private AtomicReference<QNode> tail;
+	private ThreadLocal<QNode> myNode;
+	private ThreadLocal<QNode> myPred;
+ 
+	public CLHLock() {
+		tail = new AtomicReference<QNode>(new QNode());
+		myNode = new ThreadLocal<QNode>() {
+			protected QNode initialValue() {
+				return new QNode();
+			}
+		};
+		myPred = new ThreadLocal<QNode>() {
+			protected QNode initialValue() {
+				return null;
+			}
+		};
+	}
+ 
+	public void lock() {
+		QNode qnode = myNode.get();
+		qnode.locked = true;
+		QNode pred = tail.getAndSet(qnode);
+		myPred.set(pred);
+		while (pred.locked) {}
+	}
+ 
+	public void unlock() {
+		QNode qnode = myNode.get();
+		qnode.locked = false;
+		myNode.set(myPred.get());
+	}
+}
+ ```
+
+* 当有线程申请锁时
+
+  * 先会实例化一个QNode对象，并将其设置为自己的本地线程变量myNode； 
+  * 然后将myNode的locked域设置为true，表明该线程正在等待获取锁；
+  * 接着通过AtomicReference的getAndSet()方法，将myNode设置为队列的最后一个节点，并返回其前驱节点；
+  * 最后该线程一直在其前节点的locked域自旋（while判断前节点的locked值），直到locked域变为false，即前驱节点释放了锁。注意，对于SMP架构，由于是在cache中自旋，所以是高效的；
+
+* 当一个线程释放锁时
+
+  * 将myNode的locked域设置为false,使得后继线程停止自旋以便获取到锁；
+
+  * 然后重用前驱节点，将前驱节点设置为myNode，以便下一次该线程获取锁时使用。之所以能重用，是因为此时其前驱线程不会再使用该前驱节点了。而该线程原来的myNode，可能被其后继线程或tail引用。对于java语言来说，重用实际上是没有必要的，因为如果不重用，则前驱节点是可以被jvm回收的，从而降低内存的使用。
+
+    
+
+ 
+
+ 
+
  
 
  
