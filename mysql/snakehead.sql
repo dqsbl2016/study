@@ -554,3 +554,78 @@ CREATE TABLE `t_appointment_info` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='预约信息表';
 
 
+/*
+*	inventory  库存情况
+*/
+
+
+CREATE TABLE `t_product_info` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `company_id` int(11)  NOT NULL DEFAULT '0' COMMENT '门店ID',
+  `name` varchar(50) NOT NULL DEFAULT '' COMMENT '产品名称',
+  `type` tinyint(4) NOT NULL DEFAULT '0' COMMENT '产品分类',
+  `unit` tinyint(4) NOT NULL DEFAULT '0' COMMENT '规格单位',
+  `unit_num` int(11) NOT NULL DEFAULT '0' COMMENT '单位数量',
+  `expire_time` int(11) DEFAULT '0' COMMENT '过期时间',
+  `picture` varchar(512) NOT NULL DEFAULT '' COMMENT '产品图片',
+  `price` int(11) NOT NULL DEFAULT '0' COMMENT '售价',
+  `vip_price` int(11) NOT NULL DEFAULT '0' COMMENT '会员售价',
+  `creator` int(11) NOT NULL DEFAULT '0' COMMENT '创建人',
+  `modifier` int(11) NOT NULL DEFAULT '0' COMMENT '修改人',
+  `c_t` int(11) NOT NULL DEFAULT '0' COMMENT '创建时间',
+  `u_t` int(11) NOT NULL DEFAULT '0' COMMENT '最后更新时间',
+  `is_deleted` tinyint(4) NOT NULL DEFAULT '0' COMMENT '是否删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_expire_time` (`expire_time`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='产品信息表';
+
+
+CREATE TABLE `t_product_inventory` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `company_id` int(11)  NOT NULL DEFAULT '0' COMMENT '门店ID',
+  `product_id` varchar(50) NOT NULL DEFAULT '' COMMENT '产品ID',
+  `left_num` tinyint(4) NOT NULL DEFAULT '0' COMMENT '剩余数量',
+  `total` tinyint(4) NOT NULL DEFAULT '0' COMMENT '累计采购数量',
+  `creator` int(11) NOT NULL DEFAULT '0' COMMENT '创建人',
+  `modifier` int(11) NOT NULL DEFAULT '0' COMMENT '修改人',
+  `c_t` int(11) NOT NULL DEFAULT '0' COMMENT '创建时间',
+  `u_t` int(11) NOT NULL DEFAULT '0' COMMENT '最后更新时间',
+  `is_deleted` tinyint(4) NOT NULL DEFAULT '0' COMMENT '是否删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_product_id` (`product_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='产品库存表';
+
+CREATE TABLE `t_product_record` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `company_id` int(11)  NOT NULL DEFAULT '0' COMMENT '门店ID',
+  `product_id` varchar(50) NOT NULL DEFAULT '' COMMENT '产品ID',
+  `type` tinyint(4) NOT NULL DEFAULT '0' COMMENT '操作类型 1进货 2售货',
+  `num` tinyint(4) NOT NULL DEFAULT '0' COMMENT '数量',
+  `price` int(11) NOT NULL DEFAULT '0' COMMENT '总价',
+  `datekey` int(11)  NOT NULL DEFAULT '0' COMMENT 'datekey',
+  `consumer_id` int(11)  NOT NULL DEFAULT '0' COMMENT '消费客户ID',
+  `service_id` int(11) NOT NULL DEFAULT '0' COMMENT '项目ID',
+  `creator` int(11) NOT NULL DEFAULT '0' COMMENT '创建人',
+  `modifier` int(11) NOT NULL DEFAULT '0' COMMENT '修改人',
+  `c_t` int(11) NOT NULL DEFAULT '0' COMMENT '创建时间',
+  `u_t` int(11) NOT NULL DEFAULT '0' COMMENT '最后更新时间',
+  `is_deleted` tinyint(4) NOT NULL DEFAULT '0' COMMENT '是否删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_product_id` (`product_id`) USING BTREE,
+  KEY `idx_datekey` (`datekey`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='产品进售记录';
+
+CREATE TABLE `t_daily_summary` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `company_id` int(11)  NOT NULL DEFAULT '0' COMMENT '门店ID',
+  `type` tinyint(4) NOT NULL DEFAULT '0' COMMENT '操作类型 1进货 2售货',
+  `price` int(11) NOT NULL DEFAULT '0' COMMENT '总价',
+  `datekey` int(11)  NOT NULL DEFAULT '0' COMMENT 'datekey',
+  `creator` int(11) NOT NULL DEFAULT '0' COMMENT '创建人',
+  `modifier` int(11) NOT NULL DEFAULT '0' COMMENT '修改人',
+  `c_t` int(11) NOT NULL DEFAULT '0' COMMENT '创建时间',
+  `u_t` int(11) NOT NULL DEFAULT '0' COMMENT '最后更新时间',
+  `is_deleted` tinyint(4) NOT NULL DEFAULT '0' COMMENT '是否删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_datekey` (`datekey`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='每日进售汇总';
